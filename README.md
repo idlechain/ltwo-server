@@ -30,5 +30,5 @@ Currently, the program cannot function as a daemon. Therefore, it is best to run
 
 ```bash
 screen
-python3 ltwo.py
+python3 chain.py
 ```
