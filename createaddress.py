@@ -25,10 +25,10 @@ def main():
 
     if args.json:
         if os.path.exists("ltwo.json"):
-            print("Error: El archivo 'ltwo.json' ya existe.")
+            print("Error: File 'ltwo.json' exists.")
         else:
             save_to_json(private_key)
-            print("Archivo 'ltwo.json' creado con éxito.")
+            print("File 'ltwo.json' was created.")
     else:
         print("Private key:", private_key)
         print("Public address:", address)
