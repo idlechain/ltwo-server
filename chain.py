@@ -54,7 +54,11 @@ w3 = Web3()
 sender_private_key = ''
 sender_address = ''
 chain_creator = '0xc5d29d659cedca813f8bc85e36e23ecf87b2023d'
-
+#contract types
+c_type_tworc20 = 4
+c_type_staking = 3
+c_type_validator = 1
+c_type_creation = 2
 #hardcoded contracts
 null_address = "0x0000000000000000000000000000000000000000"
 contract_validator = "0x0000000000000000000000000000000000000001"
@@ -131,7 +135,7 @@ def parse_tx_data(input_string):
     inputs = [group.lstrip('0') for group in inputs]
     inputs.reverse()
     result = {
-        'method': f'0x{method}',
+        'method': method,
         'inputs': inputs
     }
     return result
@@ -150,27 +154,34 @@ def format_tx_data(data, data_type):
 def mint(tx):
     global null_address
     global chain_creator
-    try:
-        odata = parse_tx_data(tx.txinfo['data'])
-        expected_method = '006d696e74'
-        if odata['method'] == expected_method:
-            if len(odata['inputs']) == 2:
-                minter = chain_creator
-                toaddr = format_tx_data(odata['inputs'][0], 'eth_address')
-                value = format_tx_data(odata['inputs'][1], 'integer')
-                if tx.txinfo['sender'] == miner and tx.txinfo['to'] == null_address and int(value) > 0:
-                    internal_tx(null_address, toaddr, value, tx.rawtx, str(tx.get_chain_db()))
-    except Exception as e:
-        print("Error processing mintx")
+    if tx.get_chain_db() != ltwoid:
+        try:
+            odata = parse_tx_data(tx.txinfo['data'])
+            expected_method = '7777777778'
+            if odata['method'] == expected_method:
+                if len(odata['inputs']) == 2:
+                    minter = chain_creator
+                    toaddr = format_tx_data(odata['inputs'][0], 'eth_address')
+                    value = format_tx_data(odata['inputs'][1], 'integer')
+                    if tx.txinfo['sender'] == miner and tx.txinfo['to'] == null_address and int(value) > 0:
+                        internal_tx(null_address, toaddr, value, tx.rawtx, str(tx.get_chain_db()))
+            else:
+                return False
+        except Exception as e:
+            print("Error processing mint tx")
+            return False
+        return True
+    else:
         return False
-    return True
 
 
 def contract_type(address, chainid):
-    if address == contract_staking:
-        return 2
+    if address == null_address:
+        return c_type_creation
+    elif address == contract_staking:
+        return c_type_staking
     elif address == contract_validator and chainid == ltwoid:
-        return 1
+        return c_type_validator
     else:
         return 0
 
@@ -223,6 +234,25 @@ def internal_tx(fromaddr, toaddr, value, rawtx, chainid):
 def is_validator(address):
     result = validators.find_one({"address": address})
     return True if result else False
+    
+def get_block_validator(height):
+    z = blocks.find_one({"height" : height-10})
+    try:
+        prevhash = z['hash']
+    except:
+        return False
+    v = prevhash[-10:]
+    v = int(v, 16)
+    validatorslist = {}
+    validatorslist[0] = chain_creator
+    index = 1
+    for validator in validators.find():
+        address = validator["address"]
+        if address not in validatorslist.values():
+            validatorslist[index] = address
+            index += 1
+    s = v % len(validatorslist)
+    return validatorslist[s]
 
 def create_indexes(collection, indexes):
     for index in indexes:
@@ -249,6 +279,14 @@ def peer_monitor():
             time.sleep(1)
         except Exception as e:
             time.sleep(1)
+        try:
+            if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()) or int(time.time()) >= actualts+20:
+                url = 'http://localhost:9090/json_rpc'
+                data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
+                headers = {'Content-Type': 'application/json'}
+                response = requests.post(url, data=json.dumps(data), headers=headers)
+        except Exception as e:
+            print("+++++++++++++++++++++ Mining error: restart daemon if persists!!! +++++++++++++++++++++")
 
 def socket_monitor_thread(client_thread, server):
     lastc = 0
@@ -286,7 +324,7 @@ def register_peer(server):
             'port': '9090',
             'status': 'ok'
         }
-        mfilter = {'ip': server}
+        mfilter = {'ip': str(self.client_address[0])}
         peers.update_one(mfilter, {'$set': data}, upsert=True)
     except Exception as e:
         print("Unable to add peer: " + server)
@@ -314,13 +352,11 @@ def http_client(server):
                 response = requests.get(url, timeout=5)
                 data = response.json()
                 results = data['result']
-                print(results)
                 for tx in results:
                     mempooltxs += 1
                     hdata = str(tx['rawtx'])
                     url = "http://localhost:9090/addtransaction"
                     response = requests.post(url, data=hdata, timeout=2)
-                    print(response)
                 if mempooltxs > 0:
                     print("[worker] " + str(int(time.time())) +  " Mempool processed: " + str(mempooltxs) + " txs from " + str(server))
             time.sleep(0.5)
@@ -329,7 +365,7 @@ def http_client(server):
             return
 
 def rollback_block(height):
-    print("[worker] " + str(int(time.time())) + " Rollback block: " + str(height))
+    print("[worker] " + str(int(time.time())) + "Rollback block: " + str(height))
     for txn in txs.find({"block": int(height)}):
         tx = Tx(txn['rawtx'])
         print(tx)
@@ -408,7 +444,7 @@ def sync_blockchain(force, server):
             height = z['height']
             prevhash = z['hash']
         except:
-            height = 0
+            height = 1
             prevhash = zero_hash
            
         try:
@@ -447,16 +483,11 @@ def sync_blockchain(force, server):
                         prevhash = block['hash']
                         actualblock = int(block['height'])
                         actualts = int(block['timestamp'])
-                        if actualblock == 2:
-                            #testnet missing tx fix (remove in mainnet) instead mint and internaltx
-                            db_balances = bcdb['7777001']
-                            new_balance = {"account": chain_creator, "value": "100000000000000000000000000"}
-                            db_balances.insert_one(new_balance)
                         
                     else:
                         print("[worker] " + str(int(time.time())) +  " Invalid block found. Height: " + str(block['height']))
-                        print(prevhash)
-                        print(block['prev_hash'])
+                        print(height)
+                        print(block['height'])
                         if height <= block['height']:
                             rollback_block(int(height))
                         break
@@ -479,6 +510,94 @@ def sync_blockchain(force, server):
             else:
                 print("[worker] " + str(time.time()) + ", Blockchain fully synced")
             break
+
+class Contract:
+    def __init__(self, address, chainid, rawtx, txsender, txdata):
+        self.address = address
+        self.chainid = chainid
+        self.txdata = parse_tx_data(txdata)
+        self.txsender = txsender
+        self.rawtx = rawtx
+
+    def create(self):
+        if self.txdata['method'] == '7777777777' and len(self.txdata['inputs']) == 3:
+            name = format_tx_data(self.txdata['inputs'][0], 'string')
+            symbol = format_tx_data(self.txdata['inputs'][1], 'string')
+            decimals = format_tx_data(self.txdata['inputs'][2], 'integer')
+            self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
+            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+            db_contracts.insert_one({'contract' : self.address, 'type' : c_type_tworc20, 'name' : name, 'symbol' : symbol, 'decimals' : decimals, 'transfer' : 1, 'mint' : 1, 'creator': self.txsender, 'rawtx' : self.rawtx})
+            logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
+            return True
+        if self.txdata['method'] == '7777777778' and len(self.txdata['inputs']) == 2:
+            token = format_tx_data(self.txdata['inputs'][0], 'eth_address')
+            blocks = format_tx_data(self.txdata['inputs'][1], 'integer')
+            self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
+            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+            db_contracts.insert_one({'contract' : self.address, 'type' : c_type_staking, 'token' : '0x'+token, 'blocks' : blocks, 'creator': self.txsender, 'rawtx' : self.rawtx})
+            logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
+            return True
+        else:
+            return False
+
+class Tworc20:
+    def __init__(self, address, chainid, rawtx, txsender, txdata, allowtransfer, allowmint):
+        self.address = address
+        self.chainid = chainid
+        self.allowtransfer = allowtransfer
+        self.allowmint = allowmint
+        self.txdata = parse_tx_data(txdata)
+        self.txsender = txsender
+        self.rawtx = rawtx
+        
+    def mint(self):
+        if self.allowmint == 1:
+            return True
+        else:
+            return False
+        
+    def check_balance(self):
+        db_balances = bcdb[str(self.chainid) + "_evmstorage"]
+        balance = db_balances.find_one({"contract" : self.address, "account": self.txsender})
+        if balance is None:
+            #new_balance = {"contract" : self.address, "account": self.txinfo['sender'], "value": "0"}
+            #db_balances.insert_one(new_balance)
+            return False
+        else:
+            sender_balance = int(balance["value"])
+            if sender_balance >= int(format_tx_data(self.txdata['inputs'][1], 'integer')):
+                return True
+            else:
+                return False
+                
+    def transfer(self):
+        if self.check_balance():
+            self.updatebalances()
+    
+    def updatebalances(self):
+        try:
+            db_balances = bcdb[str(self.chainid) + "_evmstorage"]
+            to = format_tx_data(self.txdata['inputs'][0], 'eth_address')
+            amount = format_tx_data(self.txdata['inputs'][1], 'integer')
+            
+            balancefrom = db_balances.find_one({"contract" : self.address, "account": self.txsender})
+            balanceto = db_balances.find_one({"contract" : self.address, "account": to})
+            
+            new_value = int(balancefrom["value"]) - int(amount)
+            db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
+            
+            if balanceto is None:
+                new_balance = {"contract" : self.address, "account": self.txsender, "value": int(amount)}
+                db_balances.insert_one(new_balance)
+            else:
+                new_value = int(balanceto["value"]) + int(amount)
+                db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
+            logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':to, 'value':str(amount)})
+        except e as Exception:
+            logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Error updating balances' })
+            return False
+        return True
+       
 
 class Tx:
     def __init__(self, rawtx):
@@ -543,9 +662,17 @@ class Tx:
                     self.type = 2
                     self.timestamp = timestamp
                     txs.insert_one(self.__dict__)
-                    self.is_validator_tx()
-                    staking_contract(self)
-                    mint(self)
+                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_validator:
+                        self.is_validator_tx()
+                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_staking:
+                        staking_contract(self)
+                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
+                        rmint = mint(self)
+                        if rmint == False:
+                            newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                            rcreate = newcontract.create()
+                            if rcreate == True:
+                                print("Contract created")
                     return True
                 except Exception as e:
                     print(e)
@@ -695,41 +822,40 @@ class Block:
         duplicated = 0
         pvalue = 0
         dvalue = 0
+        
         self.nonce = nonce
         self.extranonce = extranonce
         self.rewardtx = rewardtx
         self.sign = sign
         
-        #if int(self.get_diff()) == int(difficulty):
-        #    self.difficulty = difficulty
-        self.difficulty = difficulty
-        #else:
-        #    print("[miner] " + str(int(time.time())) +  " Invalid block difficulty, can't sync with this blockchain")
-        #    return
+        if int(self.get_diff()) == int(difficulty):
+            self.difficulty = difficulty
+        else:
+            print("[miner] " + str(int(time.time())) +  " Invalid block difficulty, can't sync with this blockchain")
+            return
 
         rwtxa = Tx(self.rewardtx)
-        #expectedreward = w3.to_wei(self.get_reward(), 'ether')
-        #if int(rwtxa.txinfo['value']) != int(expectedreward):
-        #    print("[miner] " + str(int(time.time())) +  " Invalid reward value, can't sync with this blockchain")
-        #    return
+        expectedreward = w3.to_wei(self.get_reward(), 'ether')
+        if int(rwtxa.txinfo['value']) != int(expectedreward):
+            print("[miner] " + str(int(time.time())) +  " Invalid reward value, can't sync with this blockchain")
+            return
             
-        #if self.sign_verify == False:
-        #    print("[miner] " + str(int(time.time())) +  " Invalid block signature, can't sync with this blockchain")
-        #    return
+        if self.sign_verify == False:
+            print("[miner] " + str(int(time.time())) +  " Invalid block signature, can't sync with this blockchain")
+            return
         
         seed = self.get_seed()
         hdiff = hex(self.difficulty)[2:].zfill(10)
         rewardhash = rwtxa.txinfo['hash'][2:]
         blob = self.extranonce + self.prev_hash + hdiff + "00000000" + rewardhash
-        if self.difficulty > 0:
-            hex_hash = compute_hash(blob, nonce, seed, self.height)
-            hash_bytes = bytes.fromhex(hex_hash.decode())
-            hash_array = to_byte_array(hash_bytes)[::-1]
-            hash_num = int.from_bytes(bytes(hash_array), byteorder='big')
-            hash_diff = base_diff / hash_num
-            if hash_diff < self.difficulty:
-                print("[miner] " + str(int(time.time())) +  " Invalid nonce, block difficulty too low, can't sync with this blockchain")
-                return
+        hex_hash = compute_hash(blob, nonce, seed, self.height)
+        hash_bytes = bytes.fromhex(hex_hash.decode())
+        hash_array = to_byte_array(hash_bytes)[::-1]
+        hash_num = int.from_bytes(bytes(hash_array), byteorder='big')
+        hash_diff = base_diff / hash_num
+        if hash_diff < self.difficulty:
+            print("[miner] " + str(int(time.time())) +  " Invalid nonce, block difficulty too low, can't sync with this blockchain")
+            return
 
         rwtxn = rwtxa.add_to_blockchain(0, self.height, self.timestamp)
         add_or_update_balance(self.public_key, str(w3.to_wei(self.get_reward(), 'ether')), rwtxa.get_chain_db())
@@ -737,7 +863,6 @@ class Block:
         for txn in self.transactions:
             tx = Tx(txn)
             if tx.check_chain_id() != ltwoid and tx.check_chain_id() != idlechainid:
-                #raise ValueError("Invalid ChainId")
                 mempool.delete_many({'rawtx': tx.rawtx})
                 continue
 
@@ -764,6 +889,7 @@ class Block:
         self.add_to_db()
 
     def mine(self, nonce, extranonce):
+        print("Validator designed: " + get_block_validator(self.height))
         self.nonce = nonce
         self.extranonce = extranonce
         seed = self.get_seed()
@@ -784,6 +910,7 @@ class Block:
             self.sign_block()
             self.add_to_db()
             add_or_update_balance(self.public_key, str(w3.to_wei(self.get_reward(), 'ether')), ltwoid)
+            print("Validator designed for next block: " + get_block_validator(self.height+1))
             return True
         else:
             return False
@@ -811,7 +938,6 @@ class Block:
                 del self._id
             except:
                 pass
-            print(signature_hash)
             block_string = json.dumps(self.__dict__, sort_keys=True)
             block_hash = hashlib.sha3_256(block_string.encode()).hexdigest()
             message = messages.encode_defunct(hexstr=block_hash)
@@ -847,7 +973,6 @@ class S(BaseHTTPRequestHandler):
             for result in results:
                 result_list.append(result)
             json_output = json.loads(json_util.dumps({"id": 1, "status": "ok", "result": result_list}))
-            print(json.dumps(json_output))
             self.wfile.write(json.dumps(json_output).encode('utf-8'))
 
     def do_POST(self):
@@ -858,7 +983,6 @@ class S(BaseHTTPRequestHandler):
         if str(self.path) == "/json_rpc":
             post_data = post_data.decode('utf-8')
             post_data = json.loads(post_data)
-            print("Json request: " + post_data["method"])
             self._set_response()
             if post_data["method"] == "submitblock":
                 z = blocks.find_one(sort=[("height", -1)])
@@ -869,25 +993,33 @@ class S(BaseHTTPRequestHandler):
                     height = 1
                     prevhash = zero_hash
                 try:
-                    timestamp = int(z['timestamp'])+1
+                    mintimestamp = int(z['timestamp'])+10
+                    maxtimestamp = int(z['timestamp'])+16
                 except:
-                    timestamp = int(time.time())
-                rawnonce = post_data["params"][0]
-                transactions = []
+                    mintimestamp = int(time.time())
+                    maxtimestamp = mintimestamp
 
-                block = Block(height, prevhash, transactions, sender_address, datetime.datetime.now().timestamp())
-                extranonce = rawnonce[:4]
-                nonce = rawnonce[-8:]
-                rt = block.mine(nonce, extranonce)
-                if rt == True:
-                    actualblock = block.height
-                    actualts = int(block.timestamp)
-                    self.wfile.write(('{"id" : "1", "jsonrpc" : "2.0", "result" : { "status": "OK", "hash": "' + str(block.hash) + '"} }').encode('utf-8'))
-                    print("[miner] " + str(int(time.time())) +  " New block found! Height:  " + str(block.height) + ", Difficulty: " + str(block.difficulty) + ", Extranonce: " + str(block.extranonce) + ", Nonce: " + str(block.nonce))
+                if (mintimestamp <= int(time.time()) and get_block_validator(height) == sender_address.lower()) or maxtimestamp <= int(time.time()):
+                    rawnonce = post_data["params"][0]
+                    transactions = []
+
+                    block = Block(height, prevhash, transactions, sender_address, datetime.datetime.now().timestamp())
+                    extranonce = rawnonce[:4]
+                    nonce = rawnonce[-8:]
+                    rt = block.mine(nonce, extranonce)
+                    if rt == True:
+                        actualblock = block.height
+                        actualts = int(block.timestamp)
+                        self.wfile.write(('{"id" : "1", "jsonrpc" : "2.0", "result" : { "status": "OK", "hash": "' + str(block.hash) + '"} }').encode('utf-8'))
+                        print("[miner] " + str(int(time.time())) +  " New block found! Height:  " + str(block.height) + ", Difficulty: " + str(block.difficulty) + ", Extranonce: " + str(block.extranonce) + ", Nonce: " + str(block.nonce))
+                    else:
+                        self.wfile.write('{"id" : "1", "jsonrpc" : "2.0", "error" : {"code" : "-7", "message": "Block not accepted"} }'.encode('utf-8'))
                 else:
-                    self.wfile.write('{"id" : "1", "jsonrpc" : "2.0", "error" : {"code" : "-7", "message": "Block not accepted"} }'.encode('utf-8'))
+                    if get_block_validator(height) == sender_address.lower():
+                        print("[miner] " + str(int(time.time())) +  " To quick to mining a block")
+                    else:
+                        print("[miner] " + str(int(time.time())) +  " Not your block")
             else:
-                print(post_data["method"])
                 self.wfile.write("{status: 'ok'}".encode('utf-8'))
                 
         if str(self.path) == "/registerpeer":
@@ -926,7 +1058,6 @@ class S(BaseHTTPRequestHandler):
         if str(self.path) == "/addtransaction":
             self._set_response()
             post_data = post_data.decode('utf-8')
-            print(post_data)
             try:
                 tx = Tx(post_data)
                 if tx.check_chain_id() != ltwoid and tx.check_chain_id() != idlechainid:
