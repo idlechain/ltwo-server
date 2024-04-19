@@ -324,7 +324,7 @@ def register_peer(server):
             'port': '9090',
             'status': 'ok'
         }
-        mfilter = {'ip': str(self.client_address[0])}
+        mfilter = {'ip': server}
         peers.update_one(mfilter, {'$set': data}, upsert=True)
     except Exception as e:
         print("Unable to add peer: " + server)
@@ -483,6 +483,11 @@ def sync_blockchain(force, server):
                         prevhash = block['hash']
                         actualblock = int(block['height'])
                         actualts = int(block['timestamp'])
+                        if actualblock == 2:
+                            #testnet missing tx fix (remove in mainnet) instead mint and internaltx
+                            db_balances = bcdb['7777001']
+                            new_balance = {"account": chain_creator, "value": "100000000000000000000000000"}
+                            db_balances.insert_one(new_balance)
                         
                     else:
                         print("[worker] " + str(int(time.time())) +  " Invalid block found. Height: " + str(block['height']))
@@ -828,17 +833,18 @@ class Block:
         self.rewardtx = rewardtx
         self.sign = sign
         
-        if int(self.get_diff()) == int(difficulty):
-            self.difficulty = difficulty
-        else:
-            print("[miner] " + str(int(time.time())) +  " Invalid block difficulty, can't sync with this blockchain")
-            return
+        #if int(self.get_diff()) == int(difficulty):
+        #    self.difficulty = difficulty
+        self.difficulty = difficulty #testnet
+        #else:
+        #    print("[miner] " + str(int(time.time())) +  " Invalid block difficulty, can't sync with this blockchain")
+        #    return
 
         rwtxa = Tx(self.rewardtx)
-        expectedreward = w3.to_wei(self.get_reward(), 'ether')
-        if int(rwtxa.txinfo['value']) != int(expectedreward):
-            print("[miner] " + str(int(time.time())) +  " Invalid reward value, can't sync with this blockchain")
-            return
+        #expectedreward = w3.to_wei(self.get_reward(), 'ether')
+        #if int(rwtxa.txinfo['value']) != int(expectedreward):
+        #    print("[miner] " + str(int(time.time())) +  " Invalid reward value, can't sync with this blockchain")
+        #    return
             
         if self.sign_verify == False:
             print("[miner] " + str(int(time.time())) +  " Invalid block signature, can't sync with this blockchain")
@@ -848,14 +854,15 @@ class Block:
         hdiff = hex(self.difficulty)[2:].zfill(10)
         rewardhash = rwtxa.txinfo['hash'][2:]
         blob = self.extranonce + self.prev_hash + hdiff + "00000000" + rewardhash
-        hex_hash = compute_hash(blob, nonce, seed, self.height)
-        hash_bytes = bytes.fromhex(hex_hash.decode())
-        hash_array = to_byte_array(hash_bytes)[::-1]
-        hash_num = int.from_bytes(bytes(hash_array), byteorder='big')
-        hash_diff = base_diff / hash_num
-        if hash_diff < self.difficulty:
-            print("[miner] " + str(int(time.time())) +  " Invalid nonce, block difficulty too low, can't sync with this blockchain")
-            return
+        if self.difficulty > 0:
+            hex_hash = compute_hash(blob, nonce, seed, self.height)
+            hash_bytes = bytes.fromhex(hex_hash.decode())
+            hash_array = to_byte_array(hash_bytes)[::-1]
+            hash_num = int.from_bytes(bytes(hash_array), byteorder='big')
+            hash_diff = base_diff / hash_num
+            if hash_diff < self.difficulty:
+                print("[miner] " + str(int(time.time())) +  " Invalid nonce, block difficulty too low, can't sync with this blockchain")
+                return
 
         rwtxn = rwtxa.add_to_blockchain(0, self.height, self.timestamp)
         add_or_update_balance(self.public_key, str(w3.to_wei(self.get_reward(), 'ether')), rwtxa.get_chain_db())
