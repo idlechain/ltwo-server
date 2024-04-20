@@ -249,7 +249,6 @@ def get_block_validator(height):
     global chain_creator
     
     ts = int((int(time.time()) - int(actualts)) / 10)-1
-    print("TSSSSSSSSSS: " + str(actualts))
     hblock = max(ts, 0)
     
     z = blocks.find_one({"height" : height-10-ts})
@@ -297,7 +296,6 @@ def peer_monitor():
         except Exception as e:
             time.sleep(1)
         try:
-            print("[worker] " + str(int(time.time())) + " Trying to mine. Actual validator: " + str(get_block_validator(actualblock+1)))
             if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()):
                 url = 'http://localhost:9090/json_rpc'
                 data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
