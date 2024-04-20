@@ -402,7 +402,6 @@ def http_client(server):
             time.sleep(0.5)
         except Exception as e:
             time.sleep(30)
-            return
 
 def rollback_block(height):
     print("[worker] " + str(int(time.time())) + " Rollback block: " + str(height))
