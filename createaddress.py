@@ -12,7 +12,7 @@ def generate_ethereum_wallet():
     return private_key_hex, address
 
 def save_to_json(private_key):
-    data = {"private_key": private_key}
+    data = {"private_key": private_key, "port" : "9090"}
     with open("ltwo.json", "w") as f:
         json.dump(data, f)
 
