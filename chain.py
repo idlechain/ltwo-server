@@ -28,6 +28,7 @@ from ethereum.transactions import Transaction
 import threading
 import requests
 import socket
+import re
 from decimal import Decimal
 
 assert pyrx.__version__ >= '0.0.3'
@@ -453,20 +454,19 @@ def sync_blockchain(force, server):
     global actualts
     data = None
     theight = 0
-    
-    sx = server.split(':')
-    if len(sx) == 2:
-        sx = server
-    elif len(sx) == 1:
-        sx = server + ":9090"
-    else:
-        return False
-    
-    #try:
-    #    s = peers.find_one({"ip": {"$regex": f"^{server}"}})
-    #    sx = s.ip
-    #except Exception as e:
-    #    sx = server
+     
+    rserver = re.escape(server)
+    try:
+        s = peers.find_one({"ip": {"$regex": f"^{rserver}"}})
+        sx = s.ip
+    except Exception as e:
+        sx = server.split(':')
+        if len(sx) == 2:
+            sx = server
+        elif len(sx) == 1:
+            sx = server + ":9090"
+        else:
+            return False
 
     print("[worker] " + str(int(time.time())) +  " Syncing blockchain from " + server + "...")
     while True:
@@ -534,7 +534,7 @@ def sync_blockchain(force, server):
             else:
                 actualblock = int(height)-1
                 actualts = int(time.time())
-                print("[worker] " + str(int(time.time())) +  " Blockchain fully synced. Height: " + str(actualblock))
+                print("[worker] " + str(int(time.time())) +  " Blockchain fully synced.")
                 break
         except ValueError as e:
             print("[worker] " + str(time.time()) + ", Sync error. Maybe blockchain is fully synced...");
@@ -546,6 +546,7 @@ def sync_blockchain(force, server):
             else:
                 print("[worker] " + str(time.time()) + ", Blockchain fully synced")
             break
+    return True
 
 class Contract:
     def __init__(self, address, chainid, rawtx, txsender, txdata):
