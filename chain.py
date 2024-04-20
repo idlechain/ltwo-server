@@ -275,13 +275,13 @@ def get_block_validator(height):
     ts = int((int(time.time()) - int(actualts)) / 10)-1
     hblock = max(ts, 0)
     
-    z = blocks.find_one({"height" : height-10-ts})
+    z = blocks.find_one({"height" : height-10})
     try:
         prevhash = z['hash']
     except:
         return False
     v = prevhash[-10:]
-    v = int(v, 16)
+    v = int(v, 16)+hblock
     validatorslist = {}
     validatorslist[0] = chain_creator
     index = 1
@@ -320,7 +320,17 @@ def peer_monitor():
         except Exception as e:
             time.sleep(1)
         try:
-            if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()):
+            z = blocks.find_one(sort=[("height", -1)])
+            try:
+                height = z['height']+1
+                mintimestamp = int(z['timestamp'])+10
+                maxtimestamp = int(z['timestamp'])+16
+            except:
+                height = 1
+                mintimestamp = int(time.time())
+                maxtimestamp = mintimestamp
+            
+            if (int(time.time()) >= mintimestamp and get_block_validator(height) == sender_address.lower()):
                 url = 'http://localhost:9090/json_rpc'
                 data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
                 headers = {'Content-Type': 'application/json'}
