@@ -34,6 +34,7 @@ from decimal import Decimal
 assert pyrx.__version__ >= '0.0.3'
 
 # Coin definition
+current_version = '0.9'
 chain_name = "LTWO"
 ltwoid = 7777000
 idlechainid = 7777001
@@ -136,6 +137,28 @@ def load_config(filename):
         httpport = 9090
     
     print(chain_name + " server started with address: " + sender_address)
+
+def check_version():
+    global current_version
+    try:
+        response = requests.get('https://ltwo.idlecalypse.cc/last_version')
+        latest_version = response.json()['version']
+        print("Checking for new version... ")
+        if current_version != latest_version:
+            print("Updating software. New update: ", latest_version)
+            url = 'https://raw.githubusercontent.com/idlechain/ltwo-server/main/chain.py'
+            response = requests.get(url)
+            with open('chain.py', 'wb') as f:
+                f.write(response.content)
+            print("Update completed")
+            os.execv(__file__, sys.argv)
+            return True
+        else:
+            print("Your software is up to date. Version: ", current_version)
+            return True
+    except Exception as e:
+        pass
+    return False
 
 def parse_tx_data(input_string):
     input_string = input_string[2:] if input_string.startswith('0x') else input_string
@@ -927,7 +950,6 @@ class Block:
         self.add_to_db()
 
     def mine(self, nonce, extranonce):
-        print("Validator designed: " + get_block_validator(self.height))
         self.nonce = nonce
         self.extranonce = extranonce
         seed = self.get_seed()
@@ -948,7 +970,6 @@ class Block:
             self.sign_block()
             self.add_to_db()
             add_or_update_balance(self.public_key, str(w3.to_wei(self.get_reward(), 'ether')), ltwoid)
-            print("Validator designed for next block: " + get_block_validator(self.height+1))
             return True
         else:
             return False
@@ -1156,5 +1177,5 @@ def chain_start():
         exit(1)
     
 
-
+check_version()
 chain_start()
