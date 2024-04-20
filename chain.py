@@ -34,9 +34,9 @@ assert pyrx.__version__ >= '0.0.3'
 
 # Coin definition
 chain_name = "LTWO"
-coin_ticker = "LTWO"
 ltwoid = 7777000
 idlechainid = 7777001
+token_symbols = { 7777000: "LTWO", 7777001: "IDEL" }
 major_version = 1
 minor_version = 0
 coin_decimals = 1000000000000000000
@@ -75,6 +75,8 @@ txs = bcdb["transactions"]
 mempool = bcdb["mempool"]
 backup = bcdb["backup"]
 logs = bcdb["logs"]
+
+vm_storage_prefix = "_evmstorage"
 # Define the indexes
 indices_blocks = [
     [("height", pymongo.ASCENDING)],
@@ -99,10 +101,12 @@ actualblock = 0
 actualts = int(time.time())
 open_sockets = {}
 peer_threads = {}
+httpport = 9090
 
 def load_config(filename):
     global sender_private_key
     global sender_address
+    global httpport
     try:
         with open(filename, "r") as file:
             data = json.load(file)
@@ -124,6 +128,11 @@ def load_config(filename):
     except Exception as e:
         print("Error: File " + str(filename) + " contains an invalid private key")
         exit(1)
+        
+    try:
+        httpport = int(data['port'])
+    except Exception as e:
+        httpport = 9090
     
     print(chain_name + " server started with address: " + sender_address)
 
@@ -236,7 +245,13 @@ def is_validator(address):
     return True if result else False
     
 def get_block_validator(height):
-    z = blocks.find_one({"height" : height-10})
+    global actualts
+    global chain_creator
+    
+    ts = int(int(time.time()) - int(actualts) / 10)-1
+    hblock = max(ts, 0)
+    
+    z = blocks.find_one({"height" : height-10-ts})
     try:
         prevhash = z['hash']
     except:
@@ -246,7 +261,7 @@ def get_block_validator(height):
     validatorslist = {}
     validatorslist[0] = chain_creator
     index = 1
-    for validator in validators.find():
+    for validator in validators.find({"block": {"$lte": height - 1200}}):
         address = validator["address"]
         if address not in validatorslist.values():
             validatorslist[index] = address
@@ -280,7 +295,7 @@ def peer_monitor():
         except Exception as e:
             time.sleep(1)
         try:
-            if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()) or int(time.time()) >= actualts+20:
+            if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()):
                 url = 'http://localhost:9090/json_rpc'
                 data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
                 headers = {'Content-Type': 'application/json'}
@@ -314,14 +329,13 @@ def launch_socket_client(server):
     m_thread.daemon = True
     m_thread.start()   
 
-def register_peer(server):
+def register_peer(server, port):
     try:
-        hdata = "ltwonetwork"
-        url = "http://" + server + ":9090/registerpeer"
+        hdata = "ltwonetwork//" + port
+        url = "http://" + server + "/registerpeer"
         response = requests.post(url, data=hdata, timeout=5)
         data = {
             'ip': server,
-            'port': '9090',
             'status': 'ok'
         }
         mfilter = {'ip': server}
@@ -342,13 +356,13 @@ def http_client(server):
             t = int(time.time())
             if actualblock != last_id:
                 hdata = str(actualblock)
-                url = "http://" + server + ":9090/notifyblock"
+                url = "http://" + server + "/notifyblock"
                 response = requests.post(url, data=hdata, timeout=5)
                 last_id = actualblock
             if t != last_mempool and t % blocktime == int(mempooltimer):
                 last_mempool = t
                 mempooltxs = 0
-                url = "http://" + server + ":9090/getmempool"
+                url = "http://" + server + "/getmempool"
                 response = requests.get(url, timeout=5)
                 data = response.json()
                 results = data['result']
@@ -365,14 +379,14 @@ def http_client(server):
             return
 
 def rollback_block(height):
-    print("[worker] " + str(int(time.time())) + "Rollback block: " + str(height))
+    print("[worker] " + str(int(time.time())) + " Rollback block: " + str(height))
     for txn in txs.find({"block": int(height)}):
         tx = Tx(txn['rawtx'])
         print(tx)
         add_or_update_balance(tx.txinfo['to'], int(tx.txinfo['value']) * -1, tx.get_chain_db())
         if int(txn['type']) > 1:
             add_or_update_balance(tx.txinfo['sender'], str((int(tx.txinfo['value']) + (int(tx.txinfo['gasprice'])*int(tx.txinfo['startgas'])))), tx.get_chain_db())
-        print("[worker] " + str(int(time.time())) +  " Transacction removed: " + str(int(tx.txinfo['value'])/coin_decimals) + " " + coin_ticker + ", Hash: " + str(tx.txinfo['hash']))
+        print("[worker] " + str(int(time.time())) +  " Transacction removed: " + str(tx.txinfo['hash']))
         logs.delete_many({'hash': tx.txinfo['hash']})
         txs.delete_many({'rawtx': tx.rawtx})
     blocks.delete_many({'height': height})
@@ -444,7 +458,7 @@ def sync_blockchain(force, server):
             height = z['height']
             prevhash = z['hash']
         except:
-            height = 1
+            height = 0
             prevhash = zero_hash
            
         try:
@@ -454,21 +468,21 @@ def sync_blockchain(force, server):
         
         if force == 0:
             try:
-                url = "http://" + server + ":9090/gettopblock"
+                url = "http://" + server + "/gettopblock"
                 response = requests.get(url, timeout=5)
                 data = response.json()
                 theight = data['height']
             except ValueError as e:
-                print("[worker] " + str(time.time()) + ", " + coin_ticker + " server connection error, retrying...");
+                print("[worker] " + str(time.time()) + ", " + chain_name + " server connection error, retrying...");
                 print(e)
             except Exception as e:
-                print("[worker] " + str(time.time()) + ", " + coin_ticker + " server connection error, retrying...");
+                print("[worker] " + str(time.time()) + ", " + chain_name + " server connection error, retrying...");
                 print(e)
             
         try:
             if (data != previous_data and height < theight) or force == 1:
                 hdata = str(height+1)
-                url = "http://" + server + ":9090/getblocks"
+                url = "http://" + server + "/getblocks"
                 response = requests.post(url, data=hdata, timeout=5)
                 data = response.json()
                 results = data['result']
@@ -562,7 +576,7 @@ class Tworc20:
             return False
         
     def check_balance(self):
-        db_balances = bcdb[str(self.chainid) + "_evmstorage"]
+        db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
         balance = db_balances.find_one({"contract" : self.address, "account": self.txsender})
         if balance is None:
             #new_balance = {"contract" : self.address, "account": self.txinfo['sender'], "value": "0"}
@@ -581,7 +595,7 @@ class Tworc20:
     
     def updatebalances(self):
         try:
-            db_balances = bcdb[str(self.chainid) + "_evmstorage"]
+            db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
             to = format_tx_data(self.txdata['inputs'][0], 'eth_address')
             amount = format_tx_data(self.txdata['inputs'][1], 'integer')
             
@@ -761,9 +775,9 @@ class Block:
                 mempool.delete_many({'rawtx': tx.rawtx})
         mempool.delete_many({})
         if processed > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction processed: " + str(processed) + ", Total value: " + str(int(pvalue)/coin_decimals) + " " + coin_ticker)
+            print("[miner] " + str(int(time.time())) +  " Transacction processed: " + str(processed))
         if duplicated > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction not processed: " + str(duplicated) + ", Total value: " + str(int(dvalue)/coin_decimals) + " " + coin_ticker)
+            print("[miner] " + str(int(time.time())) +  " Transacction not processed: " + str(duplicated))
 
     def get_diff(self):
         if self.height > diff_retarget_blocks:
@@ -889,9 +903,9 @@ class Block:
                     logs.insert_one(log)
                 mempool.delete_many({'rawtx': tx.rawtx})
         if processed > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction processed: " + str(processed) + ", Total value: " + str(int(pvalue)/coin_decimals) + " " + coin_ticker)
+            print("[miner] " + str(int(time.time())) +  " Transacction processed: " + str(processed))
         if duplicated > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction not processed: " + str(duplicated) + ", Total value: " + str(int(dvalue)/coin_decimals) + " " + coin_ticker)
+            print("[miner] " + str(int(time.time())) +  " Transacction not processed: " + str(duplicated))
 
         self.add_to_db()
 
@@ -1030,13 +1044,12 @@ class S(BaseHTTPRequestHandler):
                 self.wfile.write("{status: 'ok'}".encode('utf-8'))
                 
         if str(self.path) == "/registerpeer":
-            post_data = post_data.decode('utf-8')
+            post_data = post_data.decode('utf-8').split("//")
             self._set_response()
             self.wfile.write("{status: 'ok'}".encode('utf-8'))
-            if post_data == "ltwonetwork":
+            if post_data[0] == "ltwonetwork":
                 data = {
-                    'ip': str(self.client_address[0]),
-                    'port': '9090',
+                    'ip': str(self.client_address[0]) + ":" + str(post_data[1]),
                     'status': 'ok'
                 }
                 mfilter = {'ip': str(self.client_address[0])}
@@ -1088,7 +1101,7 @@ class S(BaseHTTPRequestHandler):
                 print("Transaction error: ", e)
                 self.wfile.write('{"status": "error"}'.encode('utf-8'))
 
-def run(server_class=HTTPServer, handler_class=S, port=9090):
+def run(server_class=HTTPServer, handler_class=S, port=httpport):
     logging.basicConfig(level=logging.WARNING)
     server_address = ('0.0.0.0', port)
     httpd = server_class(server_address, handler_class)
@@ -1107,18 +1120,22 @@ def chain_start():
     load_config('ltwo.json')
     
     try:
-        register_peer("ltwo.idlecalypse.cc")
+        register_peer("ltwo.idlecalypse.cc:9090", str(httpport))
     except Exception as e:
         print(e)
     
     for peer in peers.find():
         server = peer['ip']
         sync_blockchain(0, server)
+        
+    if is_validator(sender_address.lower()):
+        run()
+    else:
+        print("Become a validator for join into the LTWO network: https://ltwo.idlecalypse.cc/validators")
+        exit(1)
     
     http_monitor = threading.Thread(target=peer_monitor)
     http_monitor.daemon = True
     http_monitor.start()
-    
-    run()
 
 chain_start()
