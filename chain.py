@@ -196,9 +196,9 @@ def contract_type(address, chainid):
 
 def staking_contract(tx):
     try:
-        if tx.txinfo['data'] == '0x01' or tx.txinfo['data'] == '0x1':
-            if contract_type(tx.txinfo['to'], tx.get_chain_db()) == 2:
-                dbw = str(tx.get_chain_db()) + '_evmstorage'
+        if int(tx.txinfo['value']) == 0:
+            if contract_type(tx.txinfo['to'], tx.get_chain_db()) == c_type_staking:
+                dbw = str(tx.get_chain_db()) + vm_storage_prefix
                 value = tx.txinfo['value']
                 account = tx.txinfo['sender']
                 db_evmstorage = bcdb[str(dbw)]
@@ -211,8 +211,8 @@ def staking_contract(tx):
                         db_evmstorage.delete_many({"account": account})
                         internal_tx(tx.txinfo['to'], tx.txinfo['sender'], returnvalue, tx.rawtx, str(tx.get_chain_db()))
         else:
-            if contract_type(tx.txinfo['to'], tx.get_chain_db()) == 2:
-                dbw = str(tx.get_chain_db()) + '_evmstorage'
+            if contract_type(tx.txinfo['to'], tx.get_chain_db()) == c_type_staking:
+                dbw = str(tx.get_chain_db()) + vm_storage_prefix
                 value = tx.txinfo['value']
                 account = tx.txinfo['sender']
                 db_evmstorage = bcdb[str(dbw)]
@@ -249,6 +249,7 @@ def get_block_validator(height):
     global chain_creator
     
     ts = int((int(time.time()) - int(actualts)) / 10)-1
+    print("TSSSSSSSSSS: " + str(actualts))
     hblock = max(ts, 0)
     
     z = blocks.find_one({"height" : height-10-ts})
@@ -296,6 +297,7 @@ def peer_monitor():
         except Exception as e:
             time.sleep(1)
         try:
+            print("[worker] " + str(int(time.time())) + " Trying to mine. Actual validator: " + str(get_block_validator(actualblock+1)))
             if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()):
                 url = 'http://localhost:9090/json_rpc'
                 data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
