@@ -280,8 +280,7 @@ def get_block_validator(height):
         prevhash = z['hash']
     except:
         return False
-    v = prevhash[-10:]
-    v = int(v, 16)+hblock
+    v = height+hblock
     validatorslist = {}
     validatorslist[0] = chain_creator
     index = 1
@@ -304,6 +303,7 @@ def create_indexes(collection, indexes):
 def peer_monitor():
     global actualts
     global actualblock
+    cbt = int(time.time()) % 10
     while True:
         try:
             new_peers = []
@@ -329,6 +329,9 @@ def peer_monitor():
                 height = 1
                 mintimestamp = int(time.time())
                 maxtimestamp = mintimestamp
+
+            if int(time.time() % 10 == cbt:
+                sync_blockchain(0, "207.180.213.141:9090")
             
             if (int(time.time()) >= mintimestamp and get_block_validator(height) == sender_address.lower()):
                 url = 'http://localhost:9090/json_rpc'
