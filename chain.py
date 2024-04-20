@@ -248,7 +248,8 @@ def get_block_validator(height):
     global actualts
     global chain_creator
     
-    ts = int(int(time.time()) - int(actualts) / 10)-1
+    ts = int((int(time.time()) - int(actualts)) / 10)-1
+    print("TSSSSSSSSSS: " + str(actualts))
     hblock = max(ts, 0)
     
     z = blocks.find_one({"height" : height-10-ts})
@@ -279,6 +280,7 @@ def create_indexes(collection, indexes):
 
 def peer_monitor():
     global actualts
+    global actualblock
     while True:
         try:
             new_peers = []
@@ -295,12 +297,14 @@ def peer_monitor():
         except Exception as e:
             time.sleep(1)
         try:
+            print("[worker] " + str(int(time.time())) + " Trying to mine. Actual validator: " + str(get_block_validator(actualblock+1)))
             if (int(time.time()) >= actualts+10 and get_block_validator(actualblock+1) == sender_address.lower()):
                 url = 'http://localhost:9090/json_rpc'
                 data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
                 headers = {'Content-Type': 'application/json'}
                 response = requests.post(url, data=json.dumps(data), headers=headers)
         except Exception as e:
+            print(e)
             print("+++++++++++++++++++++ Mining error: restart daemon if persists!!! +++++++++++++++++++++")
 
 def socket_monitor_thread(client_thread, server):
@@ -451,6 +455,21 @@ def sync_blockchain(force, server):
     global actualts
     data = None
     theight = 0
+    
+    sx = server.split(':')
+    if len(sx) == 2:
+        sx = server
+    elif len(sx) == 1:
+        sx = server + ":9090"
+    else:
+        return False
+    
+    #try:
+    #    s = peers.find_one({"ip": {"$regex": f"^{server}"}})
+    #    sx = s.ip
+    #except Exception as e:
+    #    sx = server
+
     print("[worker] " + str(int(time.time())) +  " Syncing blockchain from " + server + "...")
     while True:
         z = blocks.find_one(sort=[("height", -1)])
@@ -468,7 +487,7 @@ def sync_blockchain(force, server):
         
         if force == 0:
             try:
-                url = "http://" + server + "/gettopblock"
+                url = "http://" + sx + "/gettopblock"
                 response = requests.get(url, timeout=5)
                 data = response.json()
                 theight = data['height']
@@ -482,7 +501,7 @@ def sync_blockchain(force, server):
         try:
             if (data != previous_data and height < theight) or force == 1:
                 hdata = str(height+1)
-                url = "http://" + server + "/getblocks"
+                url = "http://" + sx + "/getblocks"
                 response = requests.post(url, data=hdata, timeout=5)
                 data = response.json()
                 results = data['result']
@@ -681,8 +700,7 @@ class Tx:
                     self.type = 2
                     self.timestamp = timestamp
                     txs.insert_one(self.__dict__)
-                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_validator:
-                        self.is_validator_tx()
+                    self.is_validator_tx()
                     if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_staking:
                         staking_contract(self)
                     if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
@@ -1060,7 +1078,7 @@ class S(BaseHTTPRequestHandler):
             self._set_response()
             self.wfile.write("{status: 'ok'}".encode('utf-8'))
             if actualblock < block:
-                sync_blockchain(1, self.client_address[0])
+                sync_blockchain(0, self.client_address[0])
         if str(self.path) == "/syncbc":
             post_data = post_data.decode('utf-8')
             self._set_response()
@@ -1101,7 +1119,7 @@ class S(BaseHTTPRequestHandler):
                 print("Transaction error: ", e)
                 self.wfile.write('{"status": "error"}'.encode('utf-8'))
 
-def run(server_class=HTTPServer, handler_class=S, port=httpport):
+def run(server_class=HTTPServer, handler_class=S, port=int(httpport)):
     logging.basicConfig(level=logging.WARNING)
     server_address = ('0.0.0.0', port)
     httpd = server_class(server_address, handler_class)
@@ -1120,7 +1138,7 @@ def chain_start():
     load_config('ltwo.json')
     
     try:
-        register_peer("ltwo.idlecalypse.cc:9090", str(httpport))
+        register_peer("207.180.213.141:9090", str(httpport))
     except Exception as e:
         print(e)
     
@@ -1128,14 +1146,16 @@ def chain_start():
         server = peer['ip']
         sync_blockchain(0, server)
         
+    http_monitor = threading.Thread(target=peer_monitor)
+    http_monitor.daemon = True
+    http_monitor.start()
+        
     if is_validator(sender_address.lower()):
         run()
     else:
         print("Become a validator for join into the LTWO network: https://ltwo.idlecalypse.cc/validators")
         exit(1)
     
-    http_monitor = threading.Thread(target=peer_monitor)
-    http_monitor.daemon = True
-    http_monitor.start()
+
 
 chain_start()
