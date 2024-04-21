@@ -330,7 +330,7 @@ def peer_monitor():
                 mintimestamp = int(time.time())
                 maxtimestamp = mintimestamp
 
-            if int(time.time() % 10 == cbt:
+            if int(time.time()) % 10 == cbt:
                 sync_blockchain(0, "207.180.213.141:9090")
             
             if (int(time.time()) >= mintimestamp and get_block_validator(height) == sender_address.lower()):
