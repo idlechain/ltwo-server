@@ -104,6 +104,12 @@ actualts = int(time.time())
 open_sockets = {}
 peer_threads = {}
 httpport = 9090
+primary_node = "207.180.213.141:9090"
+needsync = ""
+
+def get_formatted_time():
+    now = datetime.datetime.now()
+    return "[" + now.strftime("%d/%m/%Y %H:%M:%S") + "]"
 
 def load_config(filename):
     global sender_private_key
@@ -141,18 +147,11 @@ def load_config(filename):
 def check_version():
     global current_version
     try:
-        response = requests.get('https://ltwo.idlecalypse.cc/last_version')
+        response = requests.get('https://ltwo.idlecalypse.cc/last_version', timeout=2)
         latest_version = response.json()['version']
         print("Checking for new version... ")
         if current_version != latest_version:
-            print("Updating software. New update: ", latest_version)
-            url = 'https://raw.githubusercontent.com/idlechain/ltwo-server/main/chain.py'
-            response = requests.get(url)
-            with open('chain.py', 'wb') as f:
-                f.write(response.content)
-            print("Update completed")
-            os.execv(__file__, sys.argv)
-            return True
+            return False
         else:
             print("Your software is up to date. Version: ", current_version)
             return True
@@ -271,15 +270,17 @@ def is_validator(address):
 def get_block_validator(height):
     global actualts
     global chain_creator
-    
     ts = int((int(time.time()) - int(actualts)) / 10)-1
     hblock = max(ts, 0)
-    
-    z = blocks.find_one({"height" : height-10})
-    try:
-        prevhash = z['hash']
-    except:
-        return False
+    if hblock == 1 and height > 100000:
+        z = blocks.find_one({"height" : height-1})
+        try:
+            secondvalidator = z['public_key'].lower()
+        except:
+            return False
+        return secondvalidator
+    if height > 100000:
+        hblock = hblock -1
     v = height+hblock
     validatorslist = {}
     validatorslist[0] = chain_creator
@@ -303,7 +304,6 @@ def create_indexes(collection, indexes):
 def peer_monitor():
     global actualts
     global actualblock
-    cbt = int(time.time()) % 10
     while True:
         try:
             new_peers = []
@@ -315,11 +315,23 @@ def peer_monitor():
                     new_thread.start()
                     new_peers.append(server)
             if new_peers:
-                print(f"New peers registered: {', '.join(new_peers)}")
-            time.sleep(1)
+                print("[peers] " + get_formatted_time() + f" New peers registered: {', '.join(new_peers)}")
+            time.sleep(10)
         except Exception as e:
-            time.sleep(1)
+            time.sleep(10)
+
+def miner_monitor():
+    global primary_node
+    global needsync
+    while True:
         try:
+            if needsync != "":
+                try:
+                    sync_blockchain(1, needsync)
+                except Exception as e:
+                    needsync = ""
+                needsync = ""
+            time.sleep(1)
             z = blocks.find_one(sort=[("height", -1)])
             try:
                 height = z['height']+1
@@ -329,15 +341,11 @@ def peer_monitor():
                 height = 1
                 mintimestamp = int(time.time())
                 maxtimestamp = mintimestamp
-
-            if int(time.time()) % 10 == cbt:
-                sync_blockchain(0, "207.180.213.141:9090")
-            
+            if int(time.time()) % 10 == 0:
+                sync_blockchain(1, primary_node)
             if (int(time.time()) >= mintimestamp and get_block_validator(height) == sender_address.lower()):
-                url = 'http://localhost:9090/json_rpc'
-                data = {"method": "submitblock", "params": [''.join(random.choice(string.hexdigits) for _ in range(12))]}
-                headers = {'Content-Type': 'application/json'}
-                response = requests.post(url, data=json.dumps(data), headers=headers)
+                sync_blockchain(1, primary_node)
+                mine_block(''.join(random.choice(string.hexdigits) for _ in range(12)))
         except Exception as e:
             print(e)
             print("+++++++++++++++++++++ Mining error: restart daemon if persists!!! +++++++++++++++++++++")
@@ -372,7 +380,7 @@ def register_peer(server, port):
     try:
         hdata = "ltwonetwork//" + port
         url = "http://" + server + "/registerpeer"
-        response = requests.post(url, data=hdata, timeout=5)
+        response = requests.post(url, data=hdata, timeout=2)
         data = {
             'ip': server,
             'status': 'ok'
@@ -396,13 +404,13 @@ def http_client(server):
             if actualblock != last_id:
                 hdata = str(actualblock)
                 url = "http://" + server + "/notifyblock"
-                response = requests.post(url, data=hdata, timeout=5)
+                response = requests.post(url, data=hdata, timeout=2)
                 last_id = actualblock
             if t != last_mempool and t % blocktime == int(mempooltimer):
                 last_mempool = t
                 mempooltxs = 0
                 url = "http://" + server + "/getmempool"
-                response = requests.get(url, timeout=5)
+                response = requests.get(url, timeout=2)
                 data = response.json()
                 results = data['result']
                 for tx in results:
@@ -411,20 +419,20 @@ def http_client(server):
                     url = "http://localhost:9090/addtransaction"
                     response = requests.post(url, data=hdata, timeout=2)
                 if mempooltxs > 0:
-                    print("[worker] " + str(int(time.time())) +  " Mempool processed: " + str(mempooltxs) + " txs from " + str(server))
+                    print("[worker] " + get_formatted_time() +  " Mempool processed: " + str(mempooltxs) + " txs from " + str(server))
             time.sleep(0.5)
         except Exception as e:
             time.sleep(30)
 
 def rollback_block(height):
-    print("[worker] " + str(int(time.time())) + " Rollback block: " + str(height))
+    print("[worker] " + get_formatted_time() + " Rollback block: " + str(height))
     for txn in txs.find({"block": int(height)}):
         tx = Tx(txn['rawtx'])
         print(tx)
         add_or_update_balance(tx.txinfo['to'], int(tx.txinfo['value']) * -1, tx.get_chain_db())
         if int(txn['type']) > 1:
             add_or_update_balance(tx.txinfo['sender'], str((int(tx.txinfo['value']) + (int(tx.txinfo['gasprice'])*int(tx.txinfo['startgas'])))), tx.get_chain_db())
-        print("[worker] " + str(int(time.time())) +  " Transacction removed: " + str(tx.txinfo['hash']))
+        print("[worker] " + get_formatted_time() +  " Transacction removed: " + str(tx.txinfo['hash']))
         logs.delete_many({'hash': tx.txinfo['hash']})
         txs.delete_many({'rawtx': tx.rawtx})
     blocks.delete_many({'height': height})
@@ -483,7 +491,43 @@ def compute_hash(b, n, s, h):
     hex_hash = binascii.hexlify( pyrx.get_rx_hash(bin, seed, h) )
     return hex_hash
 
-def sync_blockchain(force, server):
+def mine_block(rawnonce):
+    global actualblock
+    global actualts
+    global sender_address
+    z = blocks.find_one(sort=[("height", -1)])
+    try:
+        height = z['height']+1
+        prevhash = z['hash']
+    except:
+        height = 1
+        prevhash = zero_hash
+    try:
+        mintimestamp = int(z['timestamp'])+10
+        maxtimestamp = int(z['timestamp'])+16
+    except:
+        mintimestamp = int(time.time())
+        maxtimestamp = mintimestamp
+    if (mintimestamp <= int(time.time()) and get_block_validator(height) == sender_address.lower()) or maxtimestamp <= int(time.time()):
+        transactions = []
+        block = Block(height, prevhash, transactions, sender_address, datetime.datetime.now().timestamp())
+        extranonce = rawnonce[:4]
+        nonce = rawnonce[-8:]
+        rt = block.mine(nonce, extranonce)
+        if rt == True:
+            actualblock = block.height
+            actualts = int(block.timestamp)
+            print("[miner] " + get_formatted_time() +  " New block found! Height:  " + str(block.height) + ", Difficulty: " + str(block.difficulty) + ", Extranonce: " + str(block.extranonce) + ", Nonce: " + str(block.nonce))
+            return True
+        else:
+            return False
+    else:
+        if get_block_validator(height) == sender_address.lower():
+            print("[miner] " + get_formatted_time() +  " To quick to mining a block")
+        else:
+            print("[miner] " + get_formatted_time() +  " Not your block")
+
+def sync_blockchain(force, server, start_block = -1):
     previous_data = None
     global actualblock
     global actualts
@@ -503,7 +547,7 @@ def sync_blockchain(force, server):
         else:
             return False
 
-    print("[worker] " + str(int(time.time())) +  " Syncing blockchain from " + server + "...")
+    print("[worker] " + get_formatted_time() +  " Syncing blockchain from " + server + "...")
     while True:
         z = blocks.find_one(sort=[("height", -1)])
         try:
@@ -521,21 +565,21 @@ def sync_blockchain(force, server):
         if force == 0:
             try:
                 url = "http://" + sx + "/gettopblock"
-                response = requests.get(url, timeout=5)
+                response = requests.get(url, timeout=2)
                 data = response.json()
                 theight = data['height']
             except ValueError as e:
-                print("[worker] " + str(time.time()) + ", " + chain_name + " server connection error, retrying...");
+                print("[worker] " + get_formatted_time() + ", " + chain_name + " server connection error, retrying...");
                 print(e)
             except Exception as e:
-                print("[worker] " + str(time.time()) + ", " + chain_name + " server connection error, retrying...");
+                print("[worker] " + get_formatted_time() + ", " + chain_name + " server connection error, retrying...");
                 print(e)
             
         try:
             if (data != previous_data and height < theight) or force == 1:
                 hdata = str(height+1)
                 url = "http://" + sx + "/getblocks"
-                response = requests.post(url, data=hdata, timeout=5)
+                response = requests.post(url, data=hdata, timeout=2)
                 data = response.json()
                 results = data['result']
                 for block in results:
@@ -556,30 +600,30 @@ def sync_blockchain(force, server):
                             db_balances.insert_one(new_balance)
                         
                     else:
-                        print("[worker] " + str(int(time.time())) +  " Invalid block found. Height: " + str(block['height']))
+                        print("[worker] " + get_formatted_time() +  " Invalid block found. Height: " + str(block['height']))
                         print(height)
                         print(block['height'])
                         if height <= block['height']:
                             rollback_block(int(height))
                         break
-                print("[worker] " + str(int(time.time())) +  " Block found and inserted. Height: " + str(block['height']))
+                print("[worker] " + get_formatted_time() +  " Block found and inserted. Height: " + str(block['height']))
                 previous_data = data
                 if force == 1:
                     break
             else:
                 actualblock = int(height)-1
                 actualts = int(time.time())
-                print("[worker] " + str(int(time.time())) +  " Blockchain fully synced.")
+                print("[worker] " + get_formatted_time() +  " Blockchain fully synced.")
                 break
         except ValueError as e:
-            print("[worker] " + str(time.time()) + ", Sync error. Maybe blockchain is fully synced...");
+            print("[worker] " + get_formatted_time() + ", Sync error. Maybe blockchain is fully synced...");
             break
         except Exception as e:
             if force == 0:
                 print(url)
-                print("[worker] " + str(time.time()) + ", Peer error connection, closing connection..." + str(e))
+                print("[worker] " + get_formatted_time() + ", Peer error connection, closing connection..." + str(e))
             else:
-                print("[worker] " + str(time.time()) + ", Blockchain fully synced")
+                print("[worker] " + get_formatted_time() + ", Blockchain fully synced")
             break
     return True
 
@@ -827,9 +871,9 @@ class Block:
                 mempool.delete_many({'rawtx': tx.rawtx})
         mempool.delete_many({})
         if processed > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction processed: " + str(processed))
+            print("[miner] " + get_formatted_time() +  " Transacction processed: " + str(processed))
         if duplicated > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction not processed: " + str(duplicated))
+            print("[miner] " + get_formatted_time() +  " Transacction not processed: " + str(duplicated))
 
     def get_diff(self):
         if self.height > diff_retarget_blocks:
@@ -903,17 +947,17 @@ class Block:
         #    self.difficulty = difficulty
         self.difficulty = difficulty #testnet
         #else:
-        #    print("[miner] " + str(int(time.time())) +  " Invalid block difficulty, can't sync with this blockchain")
+        #    print("[miner] " + get_formatted_time() +  " Invalid block difficulty, can't sync with this blockchain")
         #    return
 
         rwtxa = Tx(self.rewardtx)
         #expectedreward = w3.to_wei(self.get_reward(), 'ether')
         #if int(rwtxa.txinfo['value']) != int(expectedreward):
-        #    print("[miner] " + str(int(time.time())) +  " Invalid reward value, can't sync with this blockchain")
+        #    print("[miner] " + get_formatted_time() +  " Invalid reward value, can't sync with this blockchain")
         #    return
             
         if self.sign_verify == False:
-            print("[miner] " + str(int(time.time())) +  " Invalid block signature, can't sync with this blockchain")
+            print("[miner] " + get_formatted_time() +  " Invalid block signature, can't sync with this blockchain")
             return
         
         seed = self.get_seed()
@@ -927,7 +971,7 @@ class Block:
             hash_num = int.from_bytes(bytes(hash_array), byteorder='big')
             hash_diff = base_diff / hash_num
             if hash_diff < self.difficulty:
-                print("[miner] " + str(int(time.time())) +  " Invalid nonce, block difficulty too low, can't sync with this blockchain")
+                print("[miner] " + get_formatted_time() +  " Invalid nonce, block difficulty too low, can't sync with this blockchain")
                 return
 
         rwtxn = rwtxa.add_to_blockchain(0, self.height, self.timestamp)
@@ -955,9 +999,9 @@ class Block:
                     logs.insert_one(log)
                 mempool.delete_many({'rawtx': tx.rawtx})
         if processed > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction processed: " + str(processed))
+            print("[miner] " + get_formatted_time() +  " Transacction processed: " + str(processed))
         if duplicated > 0:
-            print("[miner] " + str(int(time.time())) +  " Transacction not processed: " + str(duplicated))
+            print("[miner] " + get_formatted_time() +  " Transacction not processed: " + str(duplicated))
 
         self.add_to_db()
 
@@ -1049,50 +1093,9 @@ class S(BaseHTTPRequestHandler):
     def do_POST(self):
         global actualblock
         global actualts
+        global needsync
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
-        if str(self.path) == "/json_rpc":
-            post_data = post_data.decode('utf-8')
-            post_data = json.loads(post_data)
-            self._set_response()
-            if post_data["method"] == "submitblock":
-                z = blocks.find_one(sort=[("height", -1)])
-                try:
-                    height = z['height']+1
-                    prevhash = z['hash']
-                except:
-                    height = 1
-                    prevhash = zero_hash
-                try:
-                    mintimestamp = int(z['timestamp'])+10
-                    maxtimestamp = int(z['timestamp'])+16
-                except:
-                    mintimestamp = int(time.time())
-                    maxtimestamp = mintimestamp
-
-                if (mintimestamp <= int(time.time()) and get_block_validator(height) == sender_address.lower()) or maxtimestamp <= int(time.time()):
-                    rawnonce = post_data["params"][0]
-                    transactions = []
-
-                    block = Block(height, prevhash, transactions, sender_address, datetime.datetime.now().timestamp())
-                    extranonce = rawnonce[:4]
-                    nonce = rawnonce[-8:]
-                    rt = block.mine(nonce, extranonce)
-                    if rt == True:
-                        actualblock = block.height
-                        actualts = int(block.timestamp)
-                        self.wfile.write(('{"id" : "1", "jsonrpc" : "2.0", "result" : { "status": "OK", "hash": "' + str(block.hash) + '"} }').encode('utf-8'))
-                        print("[miner] " + str(int(time.time())) +  " New block found! Height:  " + str(block.height) + ", Difficulty: " + str(block.difficulty) + ", Extranonce: " + str(block.extranonce) + ", Nonce: " + str(block.nonce))
-                    else:
-                        self.wfile.write('{"id" : "1", "jsonrpc" : "2.0", "error" : {"code" : "-7", "message": "Block not accepted"} }'.encode('utf-8'))
-                else:
-                    if get_block_validator(height) == sender_address.lower():
-                        print("[miner] " + str(int(time.time())) +  " To quick to mining a block")
-                    else:
-                        print("[miner] " + str(int(time.time())) +  " Not your block")
-            else:
-                self.wfile.write("{status: 'ok'}".encode('utf-8'))
-                
         if str(self.path) == "/registerpeer":
             post_data = post_data.decode('utf-8').split("//")
             self._set_response()
@@ -1110,7 +1113,7 @@ class S(BaseHTTPRequestHandler):
             self._set_response()
             self.wfile.write("{status: 'ok'}".encode('utf-8'))
             if actualblock < block:
-                sync_blockchain(0, self.client_address[0])
+                needsync = self.client_address[0]
         if str(self.path) == "/syncbc":
             post_data = post_data.decode('utf-8')
             self._set_response()
@@ -1155,22 +1158,26 @@ def run(server_class=HTTPServer, handler_class=S, port=int(httpport)):
     logging.basicConfig(level=logging.WARNING)
     server_address = ('0.0.0.0', port)
     httpd = server_class(server_address, handler_class)
-    print("[worker] " + str(int(time.time())) + 'Starting httpd...')
+    print("[worker] " + get_formatted_time() + 'Starting httpd...')
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     httpd.server_close()
-    print("[worker] " + str(int(time.time())) +  'Stopping httpd...')
+    print("[worker] " + get_formatted_time() +  'Stopping httpd...')
 
 def chain_start():
+    if check_version() == False:
+        print("Your software is outdated. Please, update at https://github.com/idlechain/ltwo-server")
+        exit(1)
+    
     create_indexes(blocks, indices_blocks)
     create_indexes(txs, indices_transactions)
 
     load_config('ltwo.json')
     
     try:
-        register_peer("207.180.213.141:9090", str(httpport))
+        register_peer(primary_node, str(httpport))
     except Exception as e:
         print(e)
     
@@ -1181,6 +1188,10 @@ def chain_start():
     http_monitor = threading.Thread(target=peer_monitor)
     http_monitor.daemon = True
     http_monitor.start()
+    
+    minertrhead = threading.Thread(target=miner_monitor)
+    minertrhead.daemon = True
+    minertrhead.start()
         
     if is_validator(sender_address.lower()):
         run()
@@ -1188,6 +1199,4 @@ def chain_start():
         print("Become a validator for join into the LTWO network: https://ltwo.idlecalypse.cc/validators")
         exit(1)
     
-
-check_version()
 chain_start()
