@@ -341,8 +341,6 @@ def miner_monitor():
                 height = 1
                 mintimestamp = int(time.time())
                 maxtimestamp = mintimestamp
-            if int(time.time()) % 10 == 0:
-                sync_blockchain(1, primary_node)
             if (int(time.time()) >= mintimestamp and get_block_validator(height) == sender_address.lower()):
                 sync_blockchain(1, primary_node)
                 mine_block(''.join(random.choice(string.hexdigits) for _ in range(12)))
