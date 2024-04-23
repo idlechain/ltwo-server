@@ -638,7 +638,7 @@ class Contract:
             db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
             c = db_contracts.find_one({'contract' : self.address})
             if c['type'] == c_type_tworc20:
-                cx = Tworc20(c['contract'], self.chainid, self.rawtx, self.txsender, self.txdata)
+                cx = Tworc20(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
                 return cx
             else:
                 return False
@@ -821,6 +821,7 @@ class Tx:
                     else:
                         try:
                             contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                            print("Contract loaded")
                             cx = contract.load_contract()
                             if cx == False:
                                 pass
