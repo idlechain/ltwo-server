@@ -161,8 +161,8 @@ def check_version():
 
 def parse_tx_data(input_string):
     input_string = input_string[2:] if input_string.startswith('0x') else input_string
-    method = input_string[:10]
-    inputs = input_string[10:]
+    method = input_string[:8]
+    inputs = input_string[8:]
     inputs = [inputs[max(i-64, 0):i] for i in range(len(inputs), 0, -64)]
     inputs = [group.lstrip('0') for group in inputs]
     inputs.reverse()
@@ -611,7 +611,7 @@ class Contract:
 
     def create(self):
         try:
-            if self.txdata['method'] == '7777777777' and len(self.txdata['inputs']) == 3:
+            if self.txdata['method'] == '77777777' and len(self.txdata['inputs']) == 3:
                 name = format_tx_data(self.txdata['inputs'][0], 'string')
                 symbol = format_tx_data(self.txdata['inputs'][1], 'string')
                 decimals = format_tx_data(self.txdata['inputs'][2], 'integer')
@@ -620,7 +620,7 @@ class Contract:
                 db_contracts.insert_one({'contract' : self.address, 'type' : c_type_tworc20, 'name' : name, 'symbol' : symbol, 'decimals' : decimals, 'transfer' : 1, 'mint' : 1, 'creator': self.txsender, 'rawtx' : self.rawtx})
                 logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
                 return True
-            if self.txdata['method'] == '7777777778' and len(self.txdata['inputs']) == 2:
+            if self.txdata['method'] == '77777778' and len(self.txdata['inputs']) == 2:
                 token = format_tx_data(self.txdata['inputs'][0], 'eth_address')
                 blocks = format_tx_data(self.txdata['inputs'][1], 'integer')
                 self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
