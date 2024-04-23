@@ -637,8 +637,8 @@ class Contract:
         try:
             db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
             c = db_contracts.find_one({'contract' : self.address})
-            if c.type == c_type_tworc20:
-                cx = Tworc20(c.contract, self.chainid, self.rawtx, self.txsender, self.txdata)
+            if c['type'] == c_type_tworc20:
+                cx = Tworc20(c['contract'], self.chainid, self.rawtx, self.txsender, self.txdata)
                 return cx
             else:
                 return False
@@ -659,9 +659,9 @@ class Tworc20:
             return False
 
         try:
-            self.allowtransfer = c.transfer
-            if c.creator == self.txsender:
-                self.allowmint = c.mint
+            self.allowtransfer = c['transfer']
+            if c['creator'] == self.txsender:
+                self.allowmint = c['mint']
             else:
                 self.allowmint = 0
         except Exception as e:
