@@ -814,12 +814,10 @@ class Tx:
                     if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_staking:
                         staking_contract(self)
                     elif contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
-                        rmint = mint(self)
-                        if rmint == False:
-                            newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
-                            rcreate = newcontract.create()
-                            if rcreate == True:
-                                print("Contract created")
+                        newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                        rcreate = newcontract.create()
+                        if rcreate == True:
+                            print("Contract created")
                     else:
                         try:
                             contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
