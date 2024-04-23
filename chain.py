@@ -696,7 +696,7 @@ class Tworc20:
                          except Exception as e:
                             logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Error while minting' })
                             return False
-                        return True
+                         return True
                 else:
                     return False
             except Exception as e:
