@@ -659,15 +659,15 @@ class Staking:
         db_evmstorage = bcdb[str(dbw)]
         staked = db_evmstorage.find_one({"account": self.txsender})
         if staked is None:
-            new_stake = {"account": self.txsender, "value": str(self.value)}
+            new_stake = {"account": self.txsender, "value": str(self.txvalue)}
             db_evmstorage.insert_one(new_stake)
         else:
-            new_value = int(staked["value"]) + int(self.value)
+            new_value = int(staked["value"]) + int(self.txvalue)
             db_evmstorage.update_one({"account": self.txsender}, {"$set": {"value": str(new_value)}})
         return True
 
     def process_data(self):
-        if int(self.value) == 0:
+        if int(self.txvalue) == 0:
             self.remove_stake()
         else:
             self.add_stake()
