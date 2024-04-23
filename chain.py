@@ -183,30 +183,6 @@ def format_tx_data(data, data_type):
         return "0"
 
 #start contracts test
-def mint(tx):
-    global null_address
-    global chain_creator
-    if tx.get_chain_db() != ltwoid:
-        try:
-            odata = parse_tx_data(tx.txinfo['data'])
-            expected_method = '7777777778'
-            if odata['method'] == expected_method:
-                if len(odata['inputs']) == 2:
-                    minter = chain_creator
-                    toaddr = format_tx_data(odata['inputs'][0], 'eth_address')
-                    value = format_tx_data(odata['inputs'][1], 'integer')
-                    if tx.txinfo['sender'] == miner and tx.txinfo['to'] == null_address and int(value) > 0:
-                        internal_tx(null_address, toaddr, value, tx.rawtx, str(tx.get_chain_db()))
-            else:
-                return False
-        except Exception as e:
-            print("Error processing mint tx")
-            return False
-        return True
-    else:
-        return False
-
-
 def contract_type(address, chainid):
     if address == null_address:
         return c_type_creation
@@ -634,38 +610,98 @@ class Contract:
         self.rawtx = rawtx
 
     def create(self):
-        if self.txdata['method'] == '7777777777' and len(self.txdata['inputs']) == 3:
-            name = format_tx_data(self.txdata['inputs'][0], 'string')
-            symbol = format_tx_data(self.txdata['inputs'][1], 'string')
-            decimals = format_tx_data(self.txdata['inputs'][2], 'integer')
-            self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
+        try:
+            if self.txdata['method'] == '7777777777' and len(self.txdata['inputs']) == 3:
+                name = format_tx_data(self.txdata['inputs'][0], 'string')
+                symbol = format_tx_data(self.txdata['inputs'][1], 'string')
+                decimals = format_tx_data(self.txdata['inputs'][2], 'integer')
+                self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
+                db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+                db_contracts.insert_one({'contract' : self.address, 'type' : c_type_tworc20, 'name' : name, 'symbol' : symbol, 'decimals' : decimals, 'transfer' : 1, 'mint' : 1, 'creator': self.txsender, 'rawtx' : self.rawtx})
+                logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
+                return True
+            if self.txdata['method'] == '7777777778' and len(self.txdata['inputs']) == 2:
+                token = format_tx_data(self.txdata['inputs'][0], 'eth_address')
+                blocks = format_tx_data(self.txdata['inputs'][1], 'integer')
+                self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
+                db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+                db_contracts.insert_one({'contract' : self.address, 'type' : c_type_staking, 'token' : '0x'+token, 'blocks' : blocks, 'creator': self.txsender, 'rawtx' : self.rawtx})
+                logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
+                return True
+            else:
+                return False
+        except Exception as e:
+            return False
+
+    def load_contract(self):
+        try:
             db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
-            db_contracts.insert_one({'contract' : self.address, 'type' : c_type_tworc20, 'name' : name, 'symbol' : symbol, 'decimals' : decimals, 'transfer' : 1, 'mint' : 1, 'creator': self.txsender, 'rawtx' : self.rawtx})
-            logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
-            return True
-        if self.txdata['method'] == '7777777778' and len(self.txdata['inputs']) == 2:
-            token = format_tx_data(self.txdata['inputs'][0], 'eth_address')
-            blocks = format_tx_data(self.txdata['inputs'][1], 'integer')
-            self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
-            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
-            db_contracts.insert_one({'contract' : self.address, 'type' : c_type_staking, 'token' : '0x'+token, 'blocks' : blocks, 'creator': self.txsender, 'rawtx' : self.rawtx})
-            logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
-            return True
-        else:
+            c = db_contracts.find_one({'contract' : self.address})
+            if c.type == c_type_tworc20:
+                cx = Tworc20(c.contract, self.chainid, self.rawtx, self.txsender, self.txdata)
+                return cx
+            else:
+                return False
+        except Exception as e:
             return False
 
 class Tworc20:
-    def __init__(self, address, chainid, rawtx, txsender, txdata, allowtransfer, allowmint):
+    def __init__(self, address, chainid, rawtx, txsender, txdata):
         self.address = address
         self.chainid = chainid
-        self.allowtransfer = allowtransfer
-        self.allowmint = allowmint
-        self.txdata = parse_tx_data(txdata)
+        self.txdata = txdata
         self.txsender = txsender
         self.rawtx = rawtx
         
+        db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+        c = db_contracts.find_one({'contract' : self.address, 'type' : c_type_tworc20})
+        if c is None:
+            return False
+
+        try:
+            self.allowtransfer = c.transfer
+            if c.creator == self.txsender:
+                self.allowmint = c.mint
+            else:
+                self.allowmint = 0
+        except Exception as e:
+            return False
+
+    def process_data(self):
+        if self.txdata['method'] == 'f8734302':
+            self.mint()
+        if self.txdata['method'] == 'a9059cbb':
+            self.transfer()
+
     def mint(self):
+        global vm_storage_prefix
         if self.allowmint == 1:
+            try:
+                if len(self.txdata['inputs']) == 2:
+                    toaddr = format_tx_data(self.txdata['inputs'][0], 'eth_address')
+                    value = format_tx_data(self.txdata['inputs'][1], 'integer')
+                    if int(value) > 0:
+                         try:
+                            db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
+                            to = format_tx_data(self.txdata['inputs'][0], 'eth_address')
+                            amount = format_tx_data(self.txdata['inputs'][1], 'integer')
+                            balanceto = db_balances.find_one({"contract" : self.address, "account": to})
+                            if balanceto is None:
+                                new_balance = {"contract" : self.address, "account": to, "value": str(amount)}
+                                db_balances.insert_one(new_balance)
+                            else:
+                                new_value = int(balanceto["value"]) + int(amount)
+                                db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
+                            logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':to, 'value':str(amount)})
+                        except e as Exception:
+                            logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Error while minting' })
+                            return False
+                        return True
+                else:
+                    return False
+            except Exception as e:
+                logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Exception while minting' })
+                return False
             return True
         else:
             return False
@@ -674,8 +710,6 @@ class Tworc20:
         db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
         balance = db_balances.find_one({"contract" : self.address, "account": self.txsender})
         if balance is None:
-            #new_balance = {"contract" : self.address, "account": self.txinfo['sender'], "value": "0"}
-            #db_balances.insert_one(new_balance)
             return False
         else:
             sender_balance = int(balance["value"])
@@ -701,7 +735,7 @@ class Tworc20:
             db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
             
             if balanceto is None:
-                new_balance = {"contract" : self.address, "account": self.txsender, "value": int(amount)}
+                new_balance = {"contract" : self.address, "account": self.txsender, "value": str(amount)}
                 db_balances.insert_one(new_balance)
             else:
                 new_value = int(balanceto["value"]) + int(amount)
@@ -779,13 +813,24 @@ class Tx:
                     self.is_validator_tx()
                     if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_staking:
                         staking_contract(self)
-                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
+                    elif contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
                         rmint = mint(self)
                         if rmint == False:
                             newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
                             rcreate = newcontract.create()
                             if rcreate == True:
                                 print("Contract created")
+                    else:
+                        try:
+                            contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                            cx = contract.load_contract()
+                            if cs == False:
+                                pass
+                            else:
+                                cx.process_data()
+                                print("Token tx processed")
+                        except Exception as e:
+                            print("Token tx error)
                     return True
                 except Exception as e:
                     print(e)
