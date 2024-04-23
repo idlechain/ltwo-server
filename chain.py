@@ -824,12 +824,13 @@ class Tx:
                         try:
                             contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
                             cx = contract.load_contract()
-                            if cs == False:
+                            if cx == False:
                                 pass
                             else:
                                 cx.process_data()
                                 print("Token tx processed")
                         except Exception as e:
+                            print(e)
                             print("Token tx error")
                     return True
                 except Exception as e:
