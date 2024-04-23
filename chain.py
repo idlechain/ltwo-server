@@ -192,40 +192,6 @@ def contract_type(address, chainid):
         return c_type_validator
     else:
         return 0
-
-def staking_contract(tx):
-    try:
-        if int(tx.txinfo['value']) == 0:
-            if contract_type(tx.txinfo['to'], tx.get_chain_db()) == c_type_staking:
-                dbw = str(tx.get_chain_db()) + vm_storage_prefix
-                value = tx.txinfo['value']
-                account = tx.txinfo['sender']
-                db_evmstorage = bcdb[str(dbw)]
-                staked = db_evmstorage.find_one({"account": account})
-                if staked is None:
-                    return True
-                else:
-                    returnvalue = int(staked["value"])
-                    if returnvalue > 0:
-                        db_evmstorage.delete_many({"account": account})
-                        internal_tx(tx.txinfo['to'], tx.txinfo['sender'], returnvalue, tx.rawtx, str(tx.get_chain_db()))
-        else:
-            if contract_type(tx.txinfo['to'], tx.get_chain_db()) == c_type_staking:
-                dbw = str(tx.get_chain_db()) + vm_storage_prefix
-                value = tx.txinfo['value']
-                account = tx.txinfo['sender']
-                db_evmstorage = bcdb[str(dbw)]
-                staked = db_evmstorage.find_one({"account": account})
-                if staked is None:
-                    new_stake = {"account": account, "value": str(value)}
-                    db_evmstorage.insert_one(new_stake)
-                else:
-                    new_value = int(staked["value"]) + int(value)
-                    db_evmstorage.update_one({"account": account}, {"$set": {"value": str(new_value)}})
-    except Exception as e:
-        print("Error processing staking contract")
-        return False
-    return True
 #end contracts test
 
 def internal_tx(fromaddr, toaddr, value, rawtx, chainid):
@@ -635,15 +601,77 @@ class Contract:
 
     def load_contract(self):
         try:
-            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
-            c = db_contracts.find_one({'contract' : self.address})
-            if c['type'] == c_type_tworc20:
-                cx = Tworc20(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
-                return cx
+            if self.address == '0x0000000000000000000000000000000000000002':
+                cx = Staking(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
             else:
-                return False
+                db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+                c = db_contracts.find_one({'contract' : self.address})
+                if c['type'] == c_type_tworc20:
+                    cx = Tworc20(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
+                    return cx
+                if c['type'] == c_type_staking:
+                    cx = Staking(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
+                    return cx
+                else:
+                    return False
         except Exception as e:
             return False
+
+class Staking:
+    def __init__(self, address, chainid, rawtx, txsender, txdata):
+        self.address = address
+        self.chainid = chainid
+        self.txdata = txdata
+        self.txsender = txsender
+        self.rawtx = rawtx
+
+        txn = Tx(rawtx)
+        self.txvalue = txn.txinfo['value']
+
+        if self.address == '0x0000000000000000000000000000000000000002':
+            self.token = "NATIVE"
+            self.blocks = 3000
+        else:
+            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+            c = db_contracts.find_one({'contract' : self.address, 'type' : c_type_staking})
+            if c is None:
+                return False
+            try:
+                self.token = c['token']
+                self.blocks = c['blocks']
+            except Exception as e:
+                return False
+
+    def remove_stake(self):
+        dbw = str(self.chainid) + vm_storage_prefix
+        db_evmstorage = bcdb[str(dbw)]
+        staked = db_evmstorage.find_one({"account": account})
+        if staked is None:
+            return True
+        else:
+            returnvalue = int(staked["value"])
+            if returnvalue > 0:
+                db_evmstorage.delete_many({"account": account})
+                internal_tx(self.address, self.txsender, returnvalue, self.rawtx, str(self.chainid))
+
+    def add_stake(self):
+        dbw = str(self.chainid) + vm_storage_prefix
+        db_evmstorage = bcdb[str(dbw)]
+        staked = db_evmstorage.find_one({"account": self.txsender})
+        if staked is None:
+            new_stake = {"account": self.txsender, "value": str(self.value)}
+            db_evmstorage.insert_one(new_stake)
+        else:
+            new_value = int(staked["value"]) + int(self.value)
+            db_evmstorage.update_one({"account": self.txsender}, {"$set": {"value": str(new_value)}})
+        return True
+
+    def process_data(self):
+        if int(self.value) == 0:
+            self.remove_stake()
+        else:
+            self.add_stake()
+        return True
 
 class Tworc20:
     def __init__(self, address, chainid, rawtx, txsender, txdata):
@@ -811,9 +839,7 @@ class Tx:
                     self.timestamp = timestamp
                     txs.insert_one(self.__dict__)
                     self.is_validator_tx()
-                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_staking:
-                        staking_contract(self)
-                    elif contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
+                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
                         newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
                         rcreate = newcontract.create()
                         if rcreate == True:
