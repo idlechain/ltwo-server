@@ -830,7 +830,7 @@ class Tx:
                                 cx.process_data()
                                 print("Token tx processed")
                         except Exception as e:
-                            print("Token tx error)
+                            print("Token tx error")
                     return True
                 except Exception as e:
                     print(e)
