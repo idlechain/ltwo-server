@@ -694,13 +694,13 @@ class Tworc20:
                                 db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
                             logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':to, 'value':str(amount)})
                          except Exception as e:
-                            logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Error while minting' })
+                            logs.insert_one({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.address, 'status' : 'error', 'log' : 'Error while minting' })
                             return False
                          return True
                 else:
                     return False
             except Exception as e:
-                logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Exception while minting' })
+                logs.insert_one({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.address, 'status' : 'error', 'log' : 'Exception while minting' })
                 return False
             return True
         else:
@@ -821,13 +821,11 @@ class Tx:
                     else:
                         try:
                             contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
-                            print("Contract loaded")
                             cx = contract.load_contract()
                             if cx == False:
                                 pass
                             else:
                                 cx.process_data()
-                                print("Token tx processed")
                         except Exception as e:
                             print(e)
                             print("Token tx error")
