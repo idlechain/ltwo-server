@@ -693,7 +693,7 @@ class Tworc20:
                                 new_value = int(balanceto["value"]) + int(amount)
                                 db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
                             logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':to, 'value':str(amount)})
-                        except e as Exception:
+                         except Exception as e:
                             logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Error while minting' })
                             return False
                         return True
@@ -741,7 +741,7 @@ class Tworc20:
                 new_value = int(balanceto["value"]) + int(amount)
                 db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
             logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':to, 'value':str(amount)})
-        except e as Exception:
+        except Exception as e:
             logs.insert({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.contract, 'status' : 'error', 'log' : 'Error updating balances' })
             return False
         return True
