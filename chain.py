@@ -245,7 +245,7 @@ def create_indexes(collection, indexes):
     for index in indexes:
         try:
             unique = index[-1]
-            del index[-1]  # Eliminar el último elemento que indica si el índice es único o no
+            del index[-1]
             collection.create_index(index, unique=unique)
             print(f"Index {index} created successfully.")
         except pymongo.errors.OperationFailure:
