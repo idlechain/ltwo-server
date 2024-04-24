@@ -77,6 +77,7 @@ txs = bcdb["transactions"]
 mempool = bcdb["mempool"]
 backup = bcdb["backup"]
 logs = bcdb["logs"]
+chains = bcdb["chains"]
 vm_storage_prefix = "_evmstorage"
 
 # Define the indexes
@@ -109,6 +110,26 @@ needsync = ""
 def get_formatted_time():
     now = datetime.datetime.now()
     return "[" + now.strftime("%d/%m/%Y %H:%M:%S") + "]"
+
+def init_blockchain():
+    z = blocks.find_one(sort=[("height", -1)])
+    try:
+        height = z['height']
+    except:
+        height = 0
+
+    if height == 0:
+        chains.insert_one({'chainid' : 7777000, 'symbol' : 'LTWO', 'block' : 0, 'creator': chain_creator, 'rawtx' : 'genesis', 'main': True})
+        chains.insert_one({'chainid' : 7777001, 'symbol' : 'IDEL', 'block' : 0, 'creator': chain_creator, 'rawtx' : 'genesis', 'main': False})
+        db_contracts = bcdb[str(ltwoid) + "_evmcontracts"]
+        db_contracts.insert_one({'contract' : contract_staking, 'type' : c_type_staking, 'token' : null_address, 'blocks' : 20000, 'creator': chain_creator, 'rawtx' : 'genesis'})
+        db_contracts = bcdb[str(idlechainid) + "_evmcontracts"]
+        db_contracts.insert_one({'contract' : contract_staking, 'type' : c_type_staking, 'token' : null_address, 'blocks' : 20000, 'creator': chain_creator, 'rawtx' : 'genesis'})
+        validators.insert_one({'account': chain_creator, 'block' : -2000,  'rawtx' : 'genesis'})
+        db_balances = bcdb['7777001']
+        new_balance = {"account": chain_creator, "value": "1000000000000000000"}
+        db_balances.insert_one(new_balance)
+        logs.insert_one({'rawtx':'genesis', 'event':'genesistx', 'sender':null_address, 'to':chain_creator, 'value':"1000000000000000000"})
 
 def load_config(filename):
     global sender_private_key
@@ -537,12 +558,6 @@ def sync_blockchain(force, server, start_block = -1):
                         prevhash = block['hash']
                         actualblock = int(block['height'])
                         actualts = int(block['timestamp'])
-                        if actualblock == 2:
-                            #testnet missing tx fix (remove in mainnet) instead mint and internaltx
-                            db_balances = bcdb['7777001']
-                            new_balance = {"account": chain_creator, "value": "100000000000000000000000000"}
-                            db_balances.insert_one(new_balance)
-                        
                     else:
                         print("[worker] " + get_formatted_time() +  " Invalid block found. Height: " + str(block['height']))
                         if height <= block['height']:
@@ -1238,8 +1253,8 @@ def chain_start():
     
     create_indexes(blocks, indices_blocks)
     create_indexes(txs, indices_transactions)
-
     load_config('ltwo.json')
+    init_blockchain()
     
     try:
         register_peer(primary_node, str(httpport))
