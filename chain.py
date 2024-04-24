@@ -226,7 +226,7 @@ def internal_tx(fromaddr, toaddr, value, rawtx, chainid):
     return True
 
 def is_validator(address):
-    result = validators.find_one({"address": address})
+    result = validators.find_one({"account": address})
     return True if result else False
     
 def get_block_validator(height):
@@ -241,14 +241,13 @@ def get_block_validator(height):
         except:
             return False
         return secondvalidator
-    if height > 100000:
-        hblock = hblock -1
+    hblock = hblock -1
     v = height+hblock
     validatorslist = {}
     validatorslist[0] = chain_creator
     index = 1
     for validator in validators.find({"block": {"$lte": height - 1200}}):
-        address = validator["address"]
+        address = validator["account"]
         if address not in validatorslist.values():
             validatorslist[index] = address
             index += 1
@@ -433,10 +432,7 @@ def to_byte_array(b):
     return [byte for byte in b]
 
 def get_reward(height):
-    if height == 2:
-        reward = 100000
-    else:
-        reward = 1
+    reward = 0.015
     return reward
 
 def pack_nonce(blob, nonce):
@@ -646,19 +642,15 @@ class Staking:
         txn = Tx(rawtx)
         self.txvalue = txn.txinfo['value']
 
-        if self.address == '0x0000000000000000000000000000000000000002':
-            self.token = "NATIVE"
-            self.blocks = 3000
-        else:
-            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
-            c = db_contracts.find_one({'contract' : self.address, 'type' : c_type_staking})
-            if c is None:
-                return False
-            try:
-                self.token = c['token']
-                self.blocks = c['blocks']
-            except Exception as e:
-                return False
+        db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+        c = db_contracts.find_one({'contract' : self.address, 'type' : c_type_staking})
+        if c is None:
+            return False
+        try:
+            self.token = c['token']
+            self.blocks = c['blocks']
+        except Exception as e:
+            return False
 
     def remove_stake(self):
         dbw = str(self.chainid) + vm_storage_prefix
@@ -809,7 +801,7 @@ class Tx:
         if self.txinfo['to'] == '0x0000000000000000000000000000000000000001':
             if int(self.get_chain_db()) == int(ltwoid):
                 if int(self.txinfo['value']) >= 1000000000000000000000:
-                    validators.insert_one({'address': self.txinfo['sender'], 'block' : self.block,  'rawtx' : self.rawtx})
+                    validators.insert_one({'account': self.txinfo['sender'], 'block' : self.block,  'rawtx' : self.rawtx})
                     return True
                 else:
                     return False
@@ -919,10 +911,7 @@ class Block:
         self.version = "0101"
 
     def get_reward(self):
-        if self.height == 2:
-            reward = 100000
-        else:
-            reward = 1
+        reward = 0.015
         return reward
         
     def process_mempool(self):
@@ -1028,18 +1017,17 @@ class Block:
         self.rewardtx = rewardtx
         self.sign = sign
         
-        #if int(self.get_diff()) == int(difficulty):
-        #    self.difficulty = difficulty
-        self.difficulty = difficulty #testnet
-        #else:
-        #    print("[miner] " + get_formatted_time() +  " Invalid block difficulty, can't sync with this blockchain")
-        #    return
+        if int(self.get_diff()) == int(difficulty):
+            self.difficulty = difficulty
+        else:
+            print("[miner] " + get_formatted_time() +  " Invalid block difficulty, can't sync with this blockchain")
+            return
 
         rwtxa = Tx(self.rewardtx)
-        #expectedreward = w3.to_wei(self.get_reward(), 'ether')
-        #if int(rwtxa.txinfo['value']) != int(expectedreward):
-        #    print("[miner] " + get_formatted_time() +  " Invalid reward value, can't sync with this blockchain")
-        #    return
+        expectedreward = w3.to_wei(self.get_reward(), 'ether')
+        if int(rwtxa.txinfo['value']) != int(expectedreward):
+            print("[miner] " + get_formatted_time() +  " Invalid reward value, can't sync with this blockchain")
+            return
             
         if self.sign_verify == False:
             print("[miner] " + get_formatted_time() +  " Invalid block signature, can't sync with this blockchain")
