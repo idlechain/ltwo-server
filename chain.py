@@ -549,7 +549,7 @@ def sync_blockchain(force, server, start_block = -1):
                                 rollback_block(int(height)-i)
                         break
                 print("[worker] " + get_formatted_time() +  " Block found and inserted. Height: " + str(block['height']))
-                 = data
+                previous_data = = data
                 if force == 1:
                     break
             else:
