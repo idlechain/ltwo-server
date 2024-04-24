@@ -270,7 +270,7 @@ def miner_monitor():
         try:
             if needsync != "":
                 try:
-                    sync_blockchain(1, needsync)
+                    sync_blockchain(0, needsync)
                 except Exception as e:
                     needsync = ""
                 needsync = ""
@@ -1184,11 +1184,6 @@ class S(BaseHTTPRequestHandler):
             self.wfile.write("{status: 'ok'}".encode('utf-8'))
             if actualblock < block:
                 needsync = self.client_address[0]
-        if str(self.path) == "/syncbc":
-            post_data = post_data.decode('utf-8')
-            self._set_response()
-            self.wfile.write("{status: 'ok'}".encode('utf-8'))
-            sync_blockchain(1, post_data)
         if str(self.path) == "/getblocks":
             post_data = post_data.decode('utf-8')
             self._set_response()
@@ -1248,13 +1243,11 @@ def chain_start():
     
     try:
         register_peer(primary_node, str(httpport))
+        sync_blockchain(1, primary_node)
     except Exception as e:
         print(e)
+        exit(1)
     
-    for peer in peers.find():
-        server = peer['ip']
-        sync_blockchain(0, server)
-        
     http_monitor = threading.Thread(target=peer_monitor)
     http_monitor.daemon = True
     http_monitor.start()
