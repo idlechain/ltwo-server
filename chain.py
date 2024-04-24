@@ -544,10 +544,9 @@ def sync_blockchain(force, server, start_block = -1):
                         
                     else:
                         print("[worker] " + get_formatted_time() +  " Invalid block found. Height: " + str(block['height']))
-                        print(height)
-                        print(block['height'])
                         if height <= block['height']:
-                            rollback_block(int(height))
+                            for i in range(17):
+                                rollback_block(int(height)-i)
                         break
                 print("[worker] " + get_formatted_time() +  " Block found and inserted. Height: " + str(block['height']))
                  = data
