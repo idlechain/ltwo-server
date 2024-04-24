@@ -471,6 +471,7 @@ def sync_blockchain(force, server, start_block = -1):
     previous_data = None
     global actualblock
     global actualts
+    syncoffset = 720
     data = None
     theight = 0
      
@@ -502,7 +503,7 @@ def sync_blockchain(force, server, start_block = -1):
         except:
             timestamp = 0
         
-        if force == 0:
+        if force == 0 or force == 1:
             try:
                 url = "http://" + sx + "/gettopblock"
                 response = requests.get(url, timeout=2)
@@ -516,19 +517,21 @@ def sync_blockchain(force, server, start_block = -1):
                 print(e)
             
         try:
-            if (data != previous_data and height < theight) or force == 1:
+            if data != previous_data and (height < theight or force == 1):
                 hdata = str(height+1)
                 url = "http://" + sx + "/getblocks"
                 response = requests.post(url, data=hdata, timeout=2)
                 data = response.json()
                 results = data['result']
+
+                if height > theight and height - syncoffset < theight:
+                    while height >= theight:
+                        rollback_block(int(height))
+                        height = height - 1
+                
                 for block in results:
                     if(prevhash == block['prev_hash'] and timestamp <= int(block['timestamp'])):
-                        hblock = Block(block['height'], block['prev_hash'], block['transactions'], block['public_key'], int(block['timestamp']))
-                        
-                        #if 'sign' not in block:
-                        #    block['sign'] = ''
-                        
+                        hblock = Block(block['height'], block['prev_hash'], block['transactions'], block['public_key'], int(block['timestamp']))                        
                         hblock.syncblock(block['hash'], block['nonce'], block['extranonce'], block['difficulty'], block['rewardtx'], block['sign'])
                         prevhash = block['hash']
                         actualblock = int(block['height'])
@@ -547,7 +550,7 @@ def sync_blockchain(force, server, start_block = -1):
                             rollback_block(int(height))
                         break
                 print("[worker] " + get_formatted_time() +  " Block found and inserted. Height: " + str(block['height']))
-                previous_data = data
+                 = data
                 if force == 1:
                     break
             else:
