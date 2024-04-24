@@ -201,19 +201,6 @@ def format_tx_data(data, data_type):
         return bytes.fromhex(data).decode('utf-8')
     else:
         return "0"
-
-#start contracts test
-def contract_type(address, chainid):
-    if address == null_address:
-        return c_type_creation
-    elif address == contract_staking:
-        return c_type_staking
-    elif address == contract_validator and chainid == ltwoid:
-        return c_type_validator
-    else:
-        return 0
-#end contracts test
-
 def internal_tx(fromaddr, toaddr, value, rawtx, chainid):
     try:
         add_or_update_balance(fromaddr, value * -1, chainid)
@@ -806,6 +793,21 @@ class Tx:
                 else:
                     return False
         return False
+
+    def is_native_mint_tx(self):
+        try:
+            if self.txinfo['to'] == null_address:
+                if self.txinfo['sender'] == chain_creator:
+                    odata = parse_tx_data(self.txinfo['data'])
+                    if odata['method'] == "f8734302" and len(odata['inputs']) == 2:
+                        toaddr = format_tx_data(odata['inputs'][0], 'eth_address')
+                        value = format_tx_data(odata['inputs'][1], 'integer')
+                        add_or_update_balance(toaddr, str(value), tx.get_chain_db())
+                        logs.insert_one({'rawtx':self.rawtx, 'event':'nativemint', 'sender':null_address, 'to':toaddr, 'value':str(value)})
+                        return True
+        except Exception as e:
+            return False
+        return False
         
     def check_chain_id(self):
         if int(self.txinfo['v']) == 27 or int(self.txinfo['v']) == 28:
@@ -848,24 +850,27 @@ class Tx:
                     self.type = 2
                     self.timestamp = timestamp
                     txs.insert_one(self.__dict__)
-                    self.is_validator_tx()
-                    if contract_type(self.txinfo['to'], self.get_chain_db()) == c_type_creation:
-                        newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
-                        rcreate = newcontract.create()
-                        if rcreate == True:
-                            print("Contract created")
-                    else:
-                        try:
-                            contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
-                            cx = contract.load_contract()
-                            if cx == False:
-                                pass
-                            else:
-                                cx.process_data()
-                        except Exception as e:
-                            print(e)
-                            print("Token tx error")
-                    return True
+                    rstx = self.is_validator_tx()
+                    if rstx == False:
+                        rstx = self.is_native_mint_tx()
+                    if rstx == False:
+                        if self.txinfo['to'] == null_address:
+                            newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                            rcreate = newcontract.create()
+                            if rcreate == True:
+                                print("Contract created")
+                        else:
+                            try:
+                                contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                                cx = contract.load_contract()
+                                if cx == False:
+                                    pass
+                                else:
+                                    cx.process_data()
+                            except Exception as e:
+                                print(e)
+                                print("Token tx error")
+                        return True
                 except Exception as e:
                     print(e)
                     return False
