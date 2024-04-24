@@ -77,25 +77,24 @@ txs = bcdb["transactions"]
 mempool = bcdb["mempool"]
 backup = bcdb["backup"]
 logs = bcdb["logs"]
-
 vm_storage_prefix = "_evmstorage"
+
 # Define the indexes
 indices_blocks = [
-    [("height", pymongo.ASCENDING)],
-    [("hash", pymongo.ASCENDING)],
-    [("timestamp", pymongo.ASCENDING)],
-    [("prev_hash", pymongo.ASCENDING)],
+    [("height", pymongo.ASCENDING), True],
+    [("hash", pymongo.ASCENDING), True],
+    [("timestamp", pymongo.ASCENDING), True],
+    [("prev_hash", pymongo.ASCENDING), True],
 ]
 indices_transactions = [
-    [("_id", pymongo.ASCENDING)],
-    [("block", pymongo.ASCENDING)],
-    [("timestamp", pymongo.ASCENDING)],
-    [("txinfo.hash", pymongo.ASCENDING)],
-    [("txinfo.sender", pymongo.ASCENDING)],
-    [("txinfo.to", pymongo.ASCENDING)],
-    [("rawtx", pymongo.ASCENDING)],
-    [("type", pymongo.ASCENDING)],
-    [("txinfo.value", pymongo.ASCENDING)],
+    [("_id", pymongo.ASCENDING), True],
+    [("block", pymongo.ASCENDING), False],
+    [("timestamp", pymongo.ASCENDING), False],
+    [("txinfo.hash", pymongo.ASCENDING), True],
+    [("txinfo.sender", pymongo.ASCENDING), False],
+    [("txinfo.to", pymongo.ASCENDING), False],
+    [("rawtx", pymongo.ASCENDING), True],
+    [("type", pymongo.ASCENDING), False]
 ]
 
 # Global variables
@@ -238,7 +237,9 @@ def get_block_validator(height):
 def create_indexes(collection, indexes):
     for index in indexes:
         try:
-            collection.create_index(index, unique=False)
+            unique = index[-1]
+            del index[-1]  # Eliminar el último elemento que indica si el índice es único o no
+            collection.create_index(index, unique=unique)
             print(f"Index {index} created successfully.")
         except pymongo.errors.OperationFailure:
             print(f"Index {index} already exists, not created.")
