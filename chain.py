@@ -179,6 +179,11 @@ def check_version():
         pass
     return False
 
+def build_input_string(method, inputs):
+    inputs = [inp[2:].rjust(64, '0') for inp in inputs]
+    input_string = method + ''.join(inputs)
+    return '0x' + input_string
+
 def parse_tx_data(input_string):
     input_string = input_string[2:] if input_string.startswith('0x') else input_string
     method = input_string[:8]
@@ -569,12 +574,13 @@ def sync_blockchain(force, server, start_block = -1):
     return True
 
 class Contract:
-    def __init__(self, address, chainid, rawtx, txsender, txdata):
+    def __init__(self, address, chainid, rawtx, txsender, txdata, txtime):
         self.address = address
         self.chainid = chainid
         self.txdata = parse_tx_data(txdata)
         self.txsender = txsender
         self.rawtx = rawtx
+        self.txtime = txtime
 
     def create(self):
         try:
@@ -587,12 +593,14 @@ class Contract:
                 db_contracts.insert_one({'contract' : self.address, 'type' : c_type_tworc20, 'name' : name, 'symbol' : symbol, 'decimals' : decimals, 'transfer' : 1, 'mint' : 1, 'creator': self.txsender, 'rawtx' : self.rawtx})
                 logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
                 return True
-            if self.txdata['method'] == '77777778' and len(self.txdata['inputs']) == 2:
+            if self.txdata['method'] == '77777778' and len(self.txdata['inputs']) == 4:
                 token = format_tx_data(self.txdata['inputs'][0], 'eth_address')
                 blocks = format_tx_data(self.txdata['inputs'][1], 'integer')
+                reward = format_tx_data(self.txdata['inputs'][2], 'eth_address')
+                rewardpersec = format_tx_data(self.txdata['inputs'][3], 'integer')
                 self.address = '0x' + hashlib.sha3_256(self.rawtx.encode()).hexdigest()[:40]
                 db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
-                db_contracts.insert_one({'contract' : self.address, 'type' : c_type_staking, 'token' : '0x'+token, 'blocks' : blocks, 'creator': self.txsender, 'rawtx' : self.rawtx})
+                db_contracts.insert_one({'contract' : self.address, 'type' : c_type_staking, 'token' : '0x'+token, 'blocks' : blocks, 'elapsed' : 0, 'start' : self.txtime, 'reward': reward, 'rewardpersec': rewardpersec, 'creator': self.txsender, 'rawtx' : self.rawtx})
                 logs.insert_one({'rawtx' : self.rawtx, 'event':'tokencreation', 'contract' : self.address, 'status' : 'created', 'log' : 'Contract created' })
                 return True
             else:
@@ -602,7 +610,7 @@ class Contract:
 
     def load_contract(self):
         try:
-            if self.address == '0x0000000000000000000000000000000000000002':
+            if self.address == '0x000000000000000000000000000000009900000002':
                 cx = Staking(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
             else:
                 db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
@@ -611,7 +619,7 @@ class Contract:
                     cx = Tworc20(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
                     return cx
                 if c['type'] == c_type_staking:
-                    cx = Staking(self.address, self.chainid, self.rawtx, self.txsender, self.txdata)
+                    cx = Staking(self.address, self.chainid, self.rawtx, self.txsender, self.txdata, self.txtime)
                     return cx
                 else:
                     return False
@@ -619,53 +627,110 @@ class Contract:
             return False
 
 class Staking:
-    def __init__(self, address, chainid, rawtx, txsender, txdata):
+    def __init__(self, address, chainid, rawtx, txsender, txdata, txtime):
         self.address = address
         self.chainid = chainid
         self.txdata = txdata
         self.txsender = txsender
         self.rawtx = rawtx
+        self.txtime = txtime
 
         txn = Tx(rawtx)
         self.txvalue = txn.txinfo['value']
 
         db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
         c = db_contracts.find_one({'contract' : self.address, 'type' : c_type_staking})
+        print(c)
+        
         if c is None:
+            print("es none")
             return False
         try:
             self.token = c['token']
             self.blocks = c['blocks']
+            self.start = c['start']
+            self.reward = c['reward']
+            self.token = c['token']
+            self.elapsed = c['elapsed']
+            self.rewardpersec = c['rewardpersec']
         except Exception as e:
+            print(e)
             return False
 
     def remove_stake(self):
         dbw = str(self.chainid) + vm_storage_prefix
         db_evmstorage = bcdb[str(dbw)]
-        staked = db_evmstorage.find_one({"account": account})
+        staked = db_evmstorage.find_one({'contract' : self.address, "account": self.txsender})
         if staked is None:
             return True
         else:
             returnvalue = int(staked["value"])
             if returnvalue > 0:
-                db_evmstorage.delete_many({"account": account})
+                db_evmstorage.delete_many({'contract' : self.address, "account": self.txsender})
                 internal_tx(self.address, self.txsender, returnvalue, self.rawtx, str(self.chainid))
 
     def add_stake(self):
         dbw = str(self.chainid) + vm_storage_prefix
         db_evmstorage = bcdb[str(dbw)]
-        staked = db_evmstorage.find_one({"account": self.txsender})
+        staked = db_evmstorage.find_one({'contract' : self.address, "account": self.txsender})
         if staked is None:
-            new_stake = {"account": self.txsender, "value": str(self.txvalue)}
+            new_stake = {"account": self.txsender, 'contract' : self.address, 'reward' : '0', "value": str(self.txvalue)}
             db_evmstorage.insert_one(new_stake)
         else:
             new_value = int(staked["value"]) + int(self.txvalue)
-            db_evmstorage.update_one({"account": self.txsender}, {"$set": {"value": str(new_value)}})
+            db_evmstorage.update_one({'contract' : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
         return True
+        
+    def update_rewards(self, send):
+        try:
+            dbw = str(self.chainid) + vm_storage_prefix
+            db_evmstorage = bcdb[str(dbw)]
+            stakers = []
+            total = 0
+            svalue = 0
+            
+            for staker in db_evmstorage.find({'contract' : self.address}):
+                stakers.append(staker)
+                total += int(int(staker['value'])/1000000000000)
+                
+            for staker in stakers:
+                if staker['value']:
+                    value = int(int(staker['value'])/1000000000000)
+                    percentage = (value / total) if total != 0 else 0
+                    percentage = round(percentage, 8)
+                    print(percentage)
+                    amount = int((int(self.txtime) - (int(self.start) + int(self.elapsed))) * int(self.rewardpersec) * percentage)
+                    print(amount)
+                    new_value = int(staker["reward"]) + amount
+                    print(new_value)
+                    db_evmstorage.update_one({'contract' : self.address, "account": staker['account']}, {"$set": {"reward": str(new_value)}})
+                    if staker['account'] == self.txsender:
+                        svalue = new_value
+            
+            db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
+            db_contracts.update_one({'contract' : self.address}, {"$set": {"elapsed": self.txtime - self.start }})
+            
+            if send == 1 and svalue > 0:
+                method = 'f8734302'
+                inputs = [self.txsender, hex(int(svalue))]
+                input_string = build_input_string(method, inputs)
+                print(input_string)
+                contract = Contract(self.reward, self.chainid, self.rawtx, self.address, input_string, self.txtime)
+                cx = contract.load_contract()
+                cx.process_data()
+                db_evmstorage.update_one({'contract' : self.address, "account": self.txsender}, {"$set": {"reward": str(0)}})
+        except Exception as e:
+            print("error en update ", e)
+            pass
+    
 
     def process_data(self):
+        self.update_rewards(1)
         if int(self.txvalue) == 0:
-            self.remove_stake()
+            if self.txdata['method'] == 'c1410000':
+                pass
+            else:
+                self.remove_stake()
         else:
             self.add_stake()
         return True
@@ -680,44 +745,84 @@ class Tworc20:
         
         db_contracts = bcdb[str(self.chainid) + "_evmcontracts"]
         c = db_contracts.find_one({'contract' : self.address, 'type' : c_type_tworc20})
+        
+        db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
+        isminter = db_balances.find_one({"contract" : self.address, "minter": self.txsender})
+        
         if c is None:
             return False
 
         try:
             self.allowtransfer = c['transfer']
-            if c['creator'] == self.txsender:
+            if c['creator'] == self.txsender or '0x870dd6201b8158814a1e97ab9ff5318b1e561dff' == self.txsender:
                 self.allowmint = c['mint']
             else:
-                self.allowmint = 0
+                if isminter is None:
+                    self.allowmint = 0
+                else:
+                    self.allowmint = c['mint']
         except Exception as e:
             return False
 
     def process_data(self):
+        print(self.txdata)
         if self.txdata['method'] == 'f8734302':
             self.mint()
         if self.txdata['method'] == 'a9059cbb':
             self.transfer()
+        if self.txdata['method'] == '41103170':
+            self.allow_minter()
+        if self.txdata['method'] == 'd124b131':
+            self.disable_minter()
 
-    def mint(self):
+    def allow_minter(self):
         global vm_storage_prefix
         if self.allowmint == 1:
             try:
+                if len(self.txdata['inputs']) == 1:
+                    try:
+                        db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
+                        toaddr = format_tx_data(self.txdata['inputs'][0], 'eth_address')
+                        minter = db_balances.find_one({"contract" : self.address, "minter": toaddr})
+                        if minter is None:
+                            newminter = {"contract" : self.address, "minter": toaddr}
+                            db_balances.insert_one(newminter)
+                            logs.insert_one({'rawtx':rawtx, 'event':'allowminter', 'contract' : self.address, 'sender': self.txsender, 'to': toaddr})
+                    except Exception as e:
+                        logs.insert_one({'rawtx' : self.rawtx, 'event':'allowminter', 'contract' : self.address, 'sender': self.txsender, 'status' : 'error', 'log' : 'Error adding minter' })
+                        return False
+                    return True
+                else:
+                    return False
+            except Exception as e:
+                logs.insert_one({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender': self.txsender, 'status' : 'error', 'log' : 'Exception while minting' })
+                return False
+            return True
+        else:
+            return False
+
+    def mint(self):
+        global vm_storage_prefix
+        print("try to mint")
+        if self.allowmint == 1:
+            print("mint allowed...")
+            print(self.txdata['inputs'])
+            try:
                 if len(self.txdata['inputs']) == 2:
+                    print("minting...")
                     toaddr = format_tx_data(self.txdata['inputs'][0], 'eth_address')
                     value = format_tx_data(self.txdata['inputs'][1], 'integer')
                     if int(value) > 0:
                          try:
                             db_balances = bcdb[str(self.chainid) + vm_storage_prefix]
-                            to = format_tx_data(self.txdata['inputs'][0], 'eth_address')
-                            amount = format_tx_data(self.txdata['inputs'][1], 'integer')
-                            balanceto = db_balances.find_one({"contract" : self.address, "account": to})
+                            balanceto = db_balances.find_one({"contract" : self.address, "account": toaddr})
                             if balanceto is None:
-                                new_balance = {"contract" : self.address, "account": to, "value": str(amount)}
+                                new_balance = {"contract" : self.address, "account": toaddr, "value": str(value)}
                                 db_balances.insert_one(new_balance)
                             else:
-                                new_value = int(balanceto["value"]) + int(amount)
-                                db_balances.update_one({"contract" : self.address, "account": self.txsender}, {"$set": {"value": str(new_value)}})
-                            logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':to, 'value':str(amount)})
+                                new_value = int(balanceto["value"]) + int(value)
+                                db_balances.update_one({"contract" : self.address, "account": toaddr}, {"$set": {"value": str(new_value)}})
+                            logs.insert_one({'rawtx':rawtx, 'event':'tokentransfer', 'contract' : self.address, 'sender':self.txsender, 'to':toaddr, 'value':str(value)})
                          except Exception as e:
                             logs.insert_one({'rawtx' : self.rawtx, 'event':'tokentransfer', 'contract' : self.address, 'status' : 'error', 'log' : 'Error while minting' })
                             return False
@@ -788,7 +893,7 @@ class Tx:
         if self.txinfo['to'] == '0x0000000000000000000000000000000000000001':
             if int(self.get_chain_db()) == int(ltwoid):
                 if int(self.txinfo['value']) >= 1000000000000000000000:
-                    validators.insert_one({'account': self.txinfo['sender'], 'block' : self.block,  'rawtx' : self.rawtx})
+                    validators.insert_one({'address': self.txinfo['sender'], 'block' : self.block,  'rawtx' : self.rawtx})
                     return True
                 else:
                     return False
@@ -855,13 +960,13 @@ class Tx:
                         rstx = self.is_native_mint_tx()
                     if rstx == False:
                         if self.txinfo['to'] == null_address:
-                            newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                            newcontract = Contract("", self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'], self.timestamp)
                             rcreate = newcontract.create()
                             if rcreate == True:
                                 print("Contract created")
                         else:
                             try:
-                                contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'])
+                                contract = Contract(self.txinfo['to'], self.get_chain_db(), self.rawtx, self.txinfo['sender'], self.txinfo['data'], self.timestamp)
                                 cx = contract.load_contract()
                                 if cx == False:
                                     pass
